@@ -1,0 +1,15 @@
+# local configuration & secrets
+.env
+
+# runtime state (bind-mount sources)
+tls/
+chrome-user-data/
+
+# scratch
+.docker-tmp/
+*.log
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp

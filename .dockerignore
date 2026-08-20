@@ -1,0 +1,22 @@
+# Keep the build context small — docker sends everything not listed here to
+# the daemon on every build, and chrome-user-data/ alone can be hundreds of MB.
+
+# VCS + CI
+.git
+.gitignore
+.github
+
+# Local runtime state (bind-mount sources, never part of the image)
+chrome-user-data
+tls
+.env
+.docker-tmp
+
+# Docs (not referenced by the Dockerfile)
+*.md
+LICENSE
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp

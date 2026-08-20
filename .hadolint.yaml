@@ -1,0 +1,25 @@
+# hadolint configuration — `docker run --rm -i hadolint/hadolint < Dockerfile`
+# and the CI lint job both read this file.
+#
+# Warnings below the failure threshold and rules listed under `ignored` do not
+# fail the build; each ignore has a reason.
+failure-threshold: error
+
+ignored:
+  # `cd` inside the browser layer is INTENTIONAL: /ms-playwright-agent is
+  # created, used and deleted within that single RUN, so the directory never
+  # exists in the image. WORKDIR instead would persist as image metadata and
+  # the runtime would re-create an empty workdir in every container.
+  - DL3003
+  # apt package pinning: the image deliberately tracks the distro's current
+  # package set so `docker build` picks up security updates. Rebuilds are not
+  # meant to be bit-for-bit reproducible at the distro-package level (the
+  # pieces that matter for reproducibility — Playwright, Node major, the
+  # Selkies ref — ARE pinned via build args).
+  - DL3008
+  # pip install of the locally built selkies wheel: its version is pinned by
+  # the SELKIES_REF build arg (the wheel is built from that exact commit).
+  - DL3013
+  # `npm install -g yarn` ships the yarn bundled with the current Node/npm
+  # toolchain; pinning yarn independently would add churn without benefit.
+  - DL3016
