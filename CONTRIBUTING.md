@@ -37,7 +37,8 @@ curl -sf http://127.0.0.1:9222/json/version   # then: docker rm -f cdp-smoke
 | `compose.yaml` / `compose.https.yaml` | base + HTTPS overlay compose files |
 | `.env.example` | documented runtime configuration template |
 | `update-playwright-node.mjs` | version-sync helper (Playwright ↔ Node) |
-| `.github/workflows/ci.yaml` | lint → build → smoke test → publish |
+| `.github/workflows/ci.yaml` | lint → build → smoke test → release-tag → publish |
+| `.github/workflows/playwright-update.yaml` | daily upstream Playwright watch → bump PR → auto-merge → release |
 | `examples/` | CDP client examples |
 
 ## Guidelines

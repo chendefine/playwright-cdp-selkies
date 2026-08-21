@@ -1,9 +1,16 @@
 # CI for the playwright-cdp-selkies image.
 #
-#   lint    : hadolint (Dockerfile) + shellcheck (entrypoint) + node --check
-#   verify  : docker build + runtime smoke tests (CDP endpoint + Selkies web)
-#   publish : on `v*` tags and manual dispatch — pushes to GHCR (always) and
-#             Docker Hub (when DOCKERHUB_USERNAME/DOCKERHUB_TOKEN are set)
+#   lint        : hadolint (Dockerfile) + shellcheck (entrypoint) + node --check
+#   verify      : docker build + runtime smoke tests (CDP endpoint + Selkies web)
+#   release-tag : on merges to main that change the PLAYWRIGHT_VERSION pin —
+#                 pushes tag vX.Y.Z (or vX.Y.Z-r2, -r3, ... if taken), which
+#                 re-triggers this workflow's publish job
+#   publish     : on `v*` tags and manual dispatch — pushes to GHCR (always) and
+#                 Docker Hub (when DOCKERHUB_USERNAME/DOCKERHUB_TOKEN are set)
+#
+# Together with playwright-update.yaml (daily upstream watch) this closes the
+# loop: upstream release -> re-pin PR -> CI here -> auto-merge -> tag ->
+# publish. See README "Automatic upstream updates".
 #
 # Required secrets for Docker Hub publishing (GHCR needs none, it uses the
 # built-in GITHUB_TOKEN): DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
@@ -95,6 +102,64 @@ jobs:
           done
           curl -sf http://127.0.0.1:8080/ | grep -qi '<html' \
             && echo "web UI smoke test OK"
+
+  release-tag:
+    # When a merge to main changes the pinned PLAYWRIGHT_VERSION, tag the new
+    # version so the publish job releases it (the tag push re-triggers ci.yaml
+    # with refs/tags/v*, where the publish job runs). Runs after verify so a
+    # broken image is never tagged. Manual bumps to main release the same way.
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # job-level permissions replace the workflow-level ones; this job only
+      # pushes a git tag, it does not touch packages.
+      contents: write
+    env:
+      # The tag MUST be pushed with the PAT: events created by the built-in
+      # GITHUB_TOKEN never trigger workflow runs, so a GITHUB_TOKEN-pushed tag
+      # would leave the publish job dead. Without the PAT the tag is still
+      # created, but publishing then needs a manual trigger.
+      HAS_PAT: ${{ secrets.PLAYWRIGHT_UPDATE_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2 # HEAD~1 needed to diff the incoming change
+          token: ${{ secrets.PLAYWRIGHT_UPDATE_TOKEN || github.token }}
+
+      - name: Tag the new Playwright pin (vX.Y.Z, -r2, -r3, ... if taken)
+        run: |
+          set -euo pipefail
+          BEFORE="$(git rev-parse --verify -q HEAD~1 || true)"
+          if [ -z "$BEFORE" ]; then
+            echo "no parent commit to diff against — skipping"
+            exit 0
+          fi
+          if ! git diff "$BEFORE" HEAD -- Dockerfile \
+              | grep -qE '^[-+]ARG PLAYWRIGHT_VERSION='; then
+            echo "PLAYWRIGHT_VERSION pin unchanged — nothing to release"
+            exit 0
+          fi
+          VER="$(grep -m1 '^ARG PLAYWRIGHT_VERSION=' Dockerfile | cut -d= -f2)"
+          [ -n "$VER" ] || { echo "ERROR: cannot read PLAYWRIGHT_VERSION"; exit 1; }
+          BASE="v${VER}"
+          # vX.Y.Z first; if that tag exists (re-release of the same Playwright
+          # version), increment a -r2, -r3, ... suffix.
+          EXISTING="$(git ls-remote --tags origin | cut -f2 | sed 's/\^{}$//')"
+          TAG="$BASE"; N=1
+          while printf '%s\n' "$EXISTING" | grep -qxF "refs/tags/${TAG}"; do
+            N=$((N + 1))
+            TAG="${BASE}-r${N}"
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release playwright-core ${VER}"
+          git push origin "$TAG"
+          echo "pushed ${TAG} — the tag push triggers the publish job"
+          if [ "${HAS_PAT}" != "true" ]; then
+            echo "::warning::PLAYWRIGHT_UPDATE_TOKEN is not set, so this tag was pushed with GITHUB_TOKEN and the publish job will NOT auto-trigger. Re-push the tag from a machine (git push origin :refs/tags/${TAG} && git tag -f ... && git push origin ${TAG}) or run ci.yaml manually."
+          fi
 
   publish:
     runs-on: ubuntu-latest

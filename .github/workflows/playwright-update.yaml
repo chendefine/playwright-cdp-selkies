@@ -1,0 +1,127 @@
+# Automatic upstream Playwright tracking.
+#
+# Pipeline (daily cron + manual dispatch):
+#   1. update-playwright-node.mjs resolves the latest playwright-core from npm
+#      (and the matching Node LTS major) and re-pins Dockerfile / compose.yaml /
+#      .env.example,
+#   2. a PR is opened with the re-pin diff,
+#   3. ci.yaml runs on the PR (lint + full build + smoke tests) — this needs
+#      the optional PLAYWRIGHT_UPDATE_TOKEN secret (see README): PRs created
+#      with the default GITHUB_TOKEN never fire `on: pull_request` workflows,
+#      4. the PR is marked auto-merge and is squashed once CI is green,
+#   5. the release-tag job in ci.yaml tags vX.Y.Z for the merged pin, which
+#      re-triggers ci.yaml's publish job (GHCR + Docker Hub).
+#
+# Required repo settings for the fully automatic path:
+#   - secret PLAYWRIGHT_UPDATE_TOKEN: a PAT with repo scope (classic) or a
+#     fine-grained token with Contents: Read/Write + Pull requests: Read/Write
+#   - Settings > General > Pull Requests > "Allow auto-merge" enabled
+# Without the secret the PR is still opened, but CI does not run on it —
+# close & reopen it to force CI, then merge manually.
+
+name: playwright-update
+
+on:
+  schedule:
+    - cron: "26 2 * * *" # daily, off the top of the hour to dodge peak load
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the update branch
+  pull-requests: write # open/update the bump PR
+
+concurrency:
+  group: playwright-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # PRs created with the default GITHUB_TOKEN do not trigger `on:
+      # pull_request` workflows (GitHub restriction), which would leave the
+      # auto-merge PR without CI checks. When PLAYWRIGHT_UPDATE_TOKEN is set
+      # it is used for checkout + PR creation so CI runs on the bump PR.
+      PR_TOKEN: ${{ secrets.PLAYWRIGHT_UPDATE_TOKEN || github.token }}
+      HAS_PAT: ${{ secrets.PLAYWRIGHT_UPDATE_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ env.PR_TOKEN }}
+
+      - name: Record currently pinned versions
+        id: before
+        run: |
+          set -euo pipefail
+          # awk '{print $1}' drops inline comments (NODE_VERSION line has one)
+          {
+            echo "pw=$(grep -m1 '^ARG PLAYWRIGHT_VERSION=' Dockerfile | cut -d= -f2 | awk '{print $1}')"
+            echo "node=$(grep -m1 '^ARG NODE_VERSION=' Dockerfile | cut -d= -f2 | awk '{print $1}')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Re-pin to the latest playwright-core
+        id: update
+        run: |
+          set -euo pipefail
+          node update-playwright-node.mjs
+          {
+            echo "pw=$(grep -m1 '^ARG PLAYWRIGHT_VERSION=' Dockerfile | cut -d= -f2 | awk '{print $1}')"
+            echo "node=$(grep -m1 '^ARG NODE_VERSION=' Dockerfile | cut -d= -f2 | awk '{print $1}')"
+            if git diff --quiet; then
+              echo "changed=false"
+            else
+              echo "changed=true"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report status
+        if: steps.update.outputs.changed == 'false'
+        run: |
+          echo "playwright-core pin already at the latest ${{ steps.update.outputs.pw }} — nothing to do."
+
+      - name: Open / update the bump PR
+        if: steps.update.outputs.changed == 'true'
+        id: pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ env.PR_TOKEN }}
+          branch: chore/playwright-update
+          delete-branch: true
+          title: "chore: bump playwright-core ${{ steps.before.outputs.pw }} -> ${{ steps.update.outputs.pw }} (Node ${{ steps.update.outputs.node }})"
+          commit-message: |
+            chore: bump playwright-core to ${{ steps.update.outputs.pw }} (Node ${{ steps.update.outputs.node }})
+
+            Re-pinned by update-playwright-node.mjs from live npm/Node metadata.
+          body: |
+            ### Automated Playwright re-pin
+
+            | pin | before | after |
+            | --- | --- | --- |
+            | playwright-core | `${{ steps.before.outputs.pw }}` | `${{ steps.update.outputs.pw }}` |
+            | Node major | `${{ steps.before.outputs.node }}` | `${{ steps.update.outputs.node }}` |
+
+            Merging releases image tag `${{ steps.update.outputs.pw }}`: the
+            `release-tag` job in `ci.yaml` pushes tag `v${{ steps.update.outputs.pw }}`,
+            whose tag event runs the `publish` job (GHCR + Docker Hub).
+
+            ${{ env.HAS_PAT == 'true' && 'CI (lint + full build + smoke tests) must pass; this PR auto-merges (squash) once green.' || 'Note: `PLAYWRIGHT_UPDATE_TOKEN` is not configured, so CI will NOT run on this PR (GitHub does not fire `pull_request` for PRs created with the default token). Close & reopen the PR to force CI, then merge manually.' }}
+          labels: |
+            automated
+            dependencies
+
+      - name: Enable auto-merge (squash once CI is green)
+        if: >
+          steps.update.outputs.changed == 'true' &&
+          env.HAS_PAT == 'true'
+        env:
+          GH_TOKEN: ${{ env.PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          PR="${{ steps.pr.outputs.pull-request-number }}"
+          # --auto marks the PR for merge as soon as every check succeeds and
+          # no review requirement blocks it (needs "Allow auto-merge" enabled
+          # in repository settings).
+          if ! gh pr merge "$PR" --auto --squash; then
+            echo "::warning::gh pr merge --auto failed — enable 'Allow auto-merge' in repo settings (Settings > General > Pull Requests), or merge the PR manually."
+          fi

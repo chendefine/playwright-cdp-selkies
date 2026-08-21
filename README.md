@@ -309,6 +309,26 @@ Every push and pull request runs [`ci.yaml`](.github/workflows/ci.yaml): hadolin
 
 Tag scheme: `v1.4.0` → `1.4.0`, `1.4`, `sha-<short>` and `latest`.
 
+### Automatic upstream updates
+
+[`playwright-update.yaml`](.github/workflows/playwright-update.yaml) watches npm for new `playwright-core` releases on a daily cron (also runnable manually) and drives the whole loop:
+
+1. `update-playwright-node.mjs` re-pins Playwright + Node across the repo,
+2. a bump PR is opened with the diff,
+3. `ci.yaml` runs on the PR (lint + full build + smoke tests),
+4. the PR squashes via auto-merge once CI is green,
+5. the `release-tag` job in `ci.yaml` pushes tag `v<playwright-version>`,
+6. the tag event runs the `publish` job → the image lands on GHCR / Docker Hub.
+
+If `v1.63.0` is already taken (re-release of the same Playwright version), the tag increments to `v1.63.0-r2`, `-r3`, …
+
+For the fully automatic path, configure once:
+
+* **Repo secret `PLAYWRIGHT_UPDATE_TOKEN`** — a PAT with `repo` scope (classic) or a fine-grained token with *Contents* + *Pull requests* read/write. It is needed twice: GitHub never fires `on: pull_request` for PRs created with the built-in `GITHUB_TOKEN` (the bump PR would carry no CI checks), and events created by `GITHUB_TOKEN` never trigger workflows (a release tag pushed with it would never start the publish job). Without the PAT the bump PR still opens and waits for a manual merge (close & reopen it to force CI), but the pushed tag does not auto-publish — re-push the tag from a machine or run the workflow manually.
+* **Settings → General → Pull Requests → "Allow auto-merge"** enabled, so the PR can merge itself once checks pass.
+
+Without the secret everything still works, just human-gated: the PR opens, you verify, you merge — tagging and publishing then run automatically. Manual `v*` tags keep working exactly as before, and a manual Playwright bump merged to main is auto-tagged and released the same way.
+
 ## Security considerations
 
 * **The CDP endpoint has no authentication.** Full browser control is one TCP connect away — publish `9222` on localhost or a trusted network only, never on a public IP.

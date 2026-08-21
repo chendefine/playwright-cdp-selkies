@@ -309,6 +309,26 @@ node update-playwright-node.mjs --check    # CI 模式:有偏差则退出码 1
 
 标签规则:`v1.4.0` → `1.4.0`、`1.4`、`sha-<短哈希>`、`latest`。
 
+### 上游版本自动更新
+
+[`playwright-update.yaml`](.github/workflows/playwright-update.yaml) 每天定时(也支持手动触发)监视 npm 上的 `playwright-core` 新版本,并驱动整个闭环:
+
+1. `update-playwright-node.mjs` 重新钉住仓库中的 Playwright + Node 版本;
+2. 自动开启一个包含变更 diff 的 bump PR;
+3. `ci.yaml` 在该 PR 上运行(lint + 完整构建 + 冒烟测试);
+4. CI 全绿后 PR 以 squash 方式自动合并;
+5. `ci.yaml` 中的 `release-tag` job 推送标签 `v<playwright 版本>`;
+6. 标签事件触发 `publish` job → 镜像发布到 GHCR / Docker Hub。
+
+若 `v1.63.0` 已被占用(同一 Playwright 版本重新发布),标签自动递增为 `v1.63.0-r2`、`-r3`、……
+
+要实现全自动,需一次性配置:
+
+* **仓库 secret `PLAYWRIGHT_UPDATE_TOKEN`** —— 经典 PAT(需 `repo` 权限)或 fine-grained PAT(需 *Contents* + *Pull requests* 读写)。它在两处不可或缺:GitHub 对用内置 `GITHUB_TOKEN` 创建的 PR 绝不触发 `on: pull_request`(bump PR 将没有 CI 检查);且 `GITHUB_TOKEN` 产生的事件不会触发任何 workflow(用它推送的发布标签永远不会启动 publish job)。不配置该 secret 时 bump PR 照常开启、等待人工合并(关闭再重开该 PR 可强制触发 CI),但推送的标签不会自动发布 —— 需在本机重推标签或手动运行 workflow。
+* **Settings → General → Pull Requests → "Allow auto-merge"** 打开,PR 才能在检查通过后自行合并。
+
+不配置 secret 时流程仍然完整,只是加了人工闸门:PR 照常开启,你验证后手动合并,打标签与发布随后自动完成。手动 `v*` 标签的发布方式完全不变;手动改 Playwright 版本合入 main 也会同样被自动打标签并发布。
+
 ## 安全注意事项
 
 * **CDP 端点没有认证。** 一次 TCP 连接即获得完整的浏览器控制权 —— `9222` 只发布到 localhost 或可信网络,绝不要暴露公网 IP。
