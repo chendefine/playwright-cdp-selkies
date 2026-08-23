@@ -43,6 +43,11 @@
 #                               overrides at runtime, no rebuild needed)
 #   CHROMIUM_LANG=en-US         browser UI locale + Accept-Language (default
 #                               system English; e.g. zh-CN for Chinese)
+#   CHROMIUM_DISABLE_FEATURES   comma-separated chromium feature names passed
+#                               as --disable-features=... (empty/unset = no
+#                               flag; the compose file ships a default that
+#                               turns off the HTTPS-First/HTTPS-Upgrade
+#                               experiments so plain-http pages stay as-is)
 #   CDP_INTERNAL_PORT=9221      chromium loopback DevTools port (behind nginx)
 #   CHROMIUM_HEADLESS=1          run the browser headless instead (default 0:
 #                                the browser window opens on the Xvfb display
@@ -92,6 +97,10 @@ CHROMIUM_USER_DATA_DIR="${CHROMIUM_USER_DATA_DIR:-/tmp/chrome-profile}"
 # Browser UI locale + Accept-Language; en-US by default (env override: any
 # other locale, e.g. zh-CN).
 CHROMIUM_LANG="${CHROMIUM_LANG:-en-US}"
+# Comma-separated chromium feature names -> --disable-features=<value>. No
+# default here on purpose: the compose file owns the default value; with a
+# bare `docker run` the flag is only passed when the variable is set non-empty.
+CHROMIUM_DISABLE_FEATURES="${CHROMIUM_DISABLE_FEATURES:-}"
 
 ENABLE_SELKIES="${ENABLE_SELKIES:-true}"
 ENABLE_CDP="${ENABLE_CDP:-true}"
@@ -201,6 +210,14 @@ if [ "${ENABLE_CDP}" = "true" ]; then
         WIN_W="${SCREEN_GEOMETRY%%x*}"
         WIN_H="$(echo "${SCREEN_GEOMETRY}" | cut -dx -f2)"
         CHROMIUM_FLAGS+=(--window-size="${WIN_W},${WIN_H}" --start-maximized --no-first-run)
+    fi
+    # Dedicated --disable-features knob (CHROMIUM_DISABLE_FEATURES, fed from
+    # .env by compose). Appended before CHROMIUM_EXTRA_ARGS so a manually
+    # passed --disable-features there still wins (chromium keeps the last
+    # occurrence of a repeated switch).
+    if [ -n "${CHROMIUM_DISABLE_FEATURES}" ]; then
+        log "chromium: disabling features: ${CHROMIUM_DISABLE_FEATURES}"
+        CHROMIUM_FLAGS+=(--disable-features="${CHROMIUM_DISABLE_FEATURES}")
     fi
     if [ -n "${CHROMIUM_EXTRA_ARGS:-}" ]; then
         # split the flag string into words — same semantics as the unquoted

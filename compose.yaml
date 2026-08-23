@@ -105,6 +105,12 @@ services:
       CHROMIUM_START_URL: "${CHROMIUM_START_URL:-about:blank}"
       # Extra chromium flags, e.g. "--proxy-server=http://host:3128"
       CHROMIUM_EXTRA_ARGS: "${CHROMIUM_EXTRA_ARGS:-}"
+      # Comma-separated chromium features disabled via --disable-features=.
+      # Default turns off the HTTPS-First / HTTPS-Upgrade experiments so plain
+      # http:// pages are not auto-upgraded (typical for CDP automation
+      # against internal/intercepted sites). Overridable in .env; set it to an
+      # EMPTY value there (CHROMIUM_DISABLE_FEATURES=) to drop the flag.
+      CHROMIUM_DISABLE_FEATURES: "${CHROMIUM_DISABLE_FEATURES-HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2}"
       # Browser profile; mounted to /chrome-user-data so logins, cookies and
       # extensions survive container recreation
       CHROMIUM_USER_DATA_DIR: "/chrome-user-data"

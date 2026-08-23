@@ -205,6 +205,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `CHROMIUM_LANG` | `en-US` | 浏览器 UI 语言 + `Accept-Language`(如 `zh-CN`) |
 | `CHROMIUM_START_URL` | `about:blank` | 启动时打开的页面 |
 | `CHROMIUM_EXTRA_ARGS` | *(空)* | 额外 chromium 参数,如 `--proxy-server=http://host:3128` |
+| `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2`(compose 默认;不用 compose 时为空) | 逗号分隔的特性列表,以 `--disable-features=` 传给 chromium —— 关闭 HTTPS-First / HTTPS-Upgrade 实验;在 `.env` 里设为空可去掉该参数 |
 | `CHROMIUM_USER_DATA_DIR` | `/tmp/chrome-profile`(compose:`/chrome-user-data`) | 浏览器配置目录 |
 | `CDP_INTERNAL_PORT` | `9221` | Chromium 回环 DevTools 端口(nginx 后面) |
 

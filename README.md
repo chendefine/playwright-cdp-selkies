@@ -205,6 +205,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `CHROMIUM_LANG` | `en-US` | browser UI locale + `Accept-Language` (e.g. `zh-CN`) |
 | `CHROMIUM_START_URL` | `about:blank` | page opened at startup |
 | `CHROMIUM_EXTRA_ARGS` | *(empty)* | extra chromium flags, e.g. `--proxy-server=http://host:3128` |
+| `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2` (compose; empty without compose) | comma-separated features passed as `--disable-features=` — turns off the HTTPS-First / HTTPS-Upgrade experiments; set empty in `.env` to drop the flag |
 | `CHROMIUM_USER_DATA_DIR` | `/tmp/chrome-profile` (compose: `/chrome-user-data`) | browser profile directory |
 | `CDP_INTERNAL_PORT` | `9221` | chromium loopback DevTools port (behind nginx) |
 
