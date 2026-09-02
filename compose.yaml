@@ -105,6 +105,12 @@ services:
       CHROMIUM_START_URL: "${CHROMIUM_START_URL:-about:blank}"
       # Extra chromium flags, e.g. "--proxy-server=http://host:3128"
       CHROMIUM_EXTRA_ARGS: "${CHROMIUM_EXTRA_ARGS:-}"
+      # GPU/rendering policy (default owned by the entrypoint, so it also
+      # applies without compose): auto = hardware GL when a GPU is passed in
+      # via the compose.gpu.yaml / compose.gpu-nvidia.yaml overlay, else
+      # SwiftShader software; off = force software; strict = never
+      # SwiftShader (WebGL then requires the GPU).
+      CHROMIUM_GPU: "${CHROMIUM_GPU:-auto}"
       # Comma-separated chromium features disabled via --disable-features=.
       # Default turns off the HTTPS-First / HTTPS-Upgrade experiments so plain
       # http:// pages are not auto-upgraded (typical for CDP automation

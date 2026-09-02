@@ -205,6 +205,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `CHROMIUM_LANG` | `en-US` | 浏览器 UI 语言 + `Accept-Language`(如 `zh-CN`) |
 | `CHROMIUM_START_URL` | `about:blank` | 启动时打开的页面 |
 | `CHROMIUM_EXTRA_ARGS` | *(空)* | 额外 chromium 参数,如 `--proxy-server=http://host:3128` |
+| `CHROMIUM_GPU` | `auto` | `auto` = 有直通 GPU(见 [GPU 直通](#gpu-直通可选))就用硬件渲染,否则 SwiftShader 软件渲染 —— WebGL 始终可用;`off` = 强制软件渲染;`strict` = 永不允许 SwiftShader(无 GPU 则无 WebGL) |
 | `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2`(compose 默认;不用 compose 时为空) | 逗号分隔的特性列表,以 `--disable-features=` 传给 chromium —— 关闭 HTTPS-First / HTTPS-Upgrade 实验;在 `.env` 里设为空可去掉该参数 |
 | `CHROMIUM_USER_DATA_DIR` | `/tmp/chrome-profile`(compose:`/chrome-user-data`) | 浏览器配置目录 |
 | `CDP_INTERNAL_PORT` | `9221` | Chromium 回环 DevTools 端口(nginx 后面) |
@@ -247,6 +248,22 @@ COMPOSE_FILE=compose.yaml:compose.https.yaml
 **方式 B —— 使用自己的证书:** 把 `fullchain.pem` + `privkey.pem` 放进宿主机 `./tls` 目录,再用上面的 overlay(或设 `ENABLE_HTTPS=true`)。已存在的有效证书对永远原样复用;损坏的证书对会让容器带明确错误直接退出,而不是被悄悄替换。
 
 `ENABLE_HTTPS=true` 但*不*用 overlay = HTTPS 只在 docker 网络内可用(例如挂在另一个反向代理后面)—— 宿主端口不发布。
+
+## GPU 直通(可选)
+
+默认全部走软件渲染(SwiftShader):容器在任何机器都能跑,不需要 GPU。想用宿主机的真实 GPU 渲染,在 `.env` 里加一个 opt-in overlay:
+
+```bash
+# Intel / AMD —— 直通 /dev/dri:
+COMPOSE_FILE=compose.yaml:compose.gpu.yaml
+
+# NVIDIA —— 宿主机需要专有驱动 + nvidia-container-toolkit:
+COMPOSE_FILE=compose.yaml:compose.gpu-nvidia.yaml
+```
+
+entrypoint 启动时自动探测设备(`CHROMIUM_GPU=auto` 为默认)并把 Chromium 切到 Vulkan/ANGLE 后端(`--use-angle=vulkan --enable-features=Vulkan`):WebGL/WebGPU 上下文经 Vulkan 渲染(原生 GL 路径在 Xvfb 上根本走不通),显示合成器也跑在 Vulkan 上(不开启合成标志时,chrome://gpu 会把 WebGL 标为 "Hardware accelerated but at reduced performance"—— GPU 帧被回读进 CPU 合成器)。实测:NVIDIA 直通 → `ANGLE (NVIDIA, Vulkan … GeForce RTX …)`;AMD 核显 → `ANGLE (AMD, Vulkan … RADV)`,`webgl/webgpu: enabled`(无回读)。此时无头模式也不再追加 `--disable-gpu`,SwiftShader 仍作为运行时兜底保留,设备中途出错 WebGL 不断供。`CHROMIUM_GPU=strict` 永不允许 SwiftShader(反指纹:浏览器不得上报软件渲染器,无 GPU 时 WebGL 不可用);`off` 即使挂了 GPU 也强制走软件路径。
+
+镜像内置了 Intel/AMD 的 Mesa/VA-API 用户态;NVIDIA 的 GL 库无法内置(必须与宿主机驱动版本匹配)—— 由 nvidia container toolkit 在容器启动时注入。验证方式:`docker compose exec playwright-cdp-selkies glxinfo -B` / `vainfo`(Intel/AMD)或 `nvidia-smi`(NVIDIA),再在串流的浏览器里打开 `chrome://gpu`,WebGL 应显示硬件渲染器。
 
 ## 持久化
 

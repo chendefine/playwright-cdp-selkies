@@ -205,6 +205,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `CHROMIUM_LANG` | `en-US` | browser UI locale + `Accept-Language` (e.g. `zh-CN`) |
 | `CHROMIUM_START_URL` | `about:blank` | page opened at startup |
 | `CHROMIUM_EXTRA_ARGS` | *(empty)* | extra chromium flags, e.g. `--proxy-server=http://host:3128` |
+| `CHROMIUM_GPU` | `auto` | `auto` = render on a passed-through GPU when one is visible ([GPU passthrough](#gpu-passthrough-optional)), else SwiftShader software — WebGL always works; `off` = force software; `strict` = never allow SwiftShader (WebGL then requires the GPU) |
 | `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2` (compose; empty without compose) | comma-separated features passed as `--disable-features=` — turns off the HTTPS-First / HTTPS-Upgrade experiments; set empty in `.env` to drop the flag |
 | `CHROMIUM_USER_DATA_DIR` | `/tmp/chrome-profile` (compose: `/chrome-user-data`) | browser profile directory |
 | `CDP_INTERNAL_PORT` | `9221` | chromium loopback DevTools port (behind nginx) |
@@ -247,6 +248,22 @@ This publishes `https://localhost:8443` and turns HTTPS on in one go.
 **Option B — bring your own certificate:** drop `fullchain.pem` + `privkey.pem` into `./tls` on the host and use the overlay above (or set `ENABLE_HTTPS=true`). Existing valid pairs are always reused as-is; a broken pair stops the container with a clear error instead of being silently replaced.
 
 `ENABLE_HTTPS=true` *without* the overlay means HTTPS works only inside the docker network (e.g. behind another reverse proxy) — the host port stays unpublished.
+
+## GPU passthrough (optional)
+
+By default everything renders in software (SwiftShader): the container runs anywhere, no GPU required. To render on the host's real GPU instead, add one of the opt-in overlays in `.env`:
+
+```bash
+# Intel / AMD — passes /dev/dri through:
+COMPOSE_FILE=compose.yaml:compose.gpu.yaml
+
+# NVIDIA — host needs the proprietary driver + nvidia-container-toolkit:
+COMPOSE_FILE=compose.yaml:compose.gpu-nvidia.yaml
+```
+
+The entrypoint auto-detects the device at start (`CHROMIUM_GPU=auto`, the default) and switches Chromium to the Vulkan/ANGLE backend (`--use-angle=vulkan --enable-features=Vulkan`): WebGL/WebGPU contexts render via Vulkan — the native-GL path cannot work on Xvfb at all — and the display compositor runs on Vulkan too (without the compositing flag chrome://gpu reports WebGL as "Hardware accelerated but at reduced performance": GPU frames read back into a CPU compositor). Verified results: NVIDIA passthrough → `ANGLE (NVIDIA, Vulkan … GeForce RTX …)`, AMD iGPU → `ANGLE (AMD, Vulkan … RADV)` with `webgl/webgpu: enabled` (no readback). `--disable-gpu` is then no longer added in headless mode, and SwiftShader stays allowed as a runtime fallback so WebGL survives a flaky device. `CHROMIUM_GPU=strict` never allows SwiftShader (anti-fingerprinting: the browser must not report a software renderer — WebGL is then unavailable without a GPU); `off` forces the software path even with a GPU attached.
+
+The image bakes in the Mesa/VA-API userland for Intel/AMD; NVIDIA GL libraries cannot be baked in (they must match the host driver) — the nvidia container toolkit injects them at container start. Verify with `docker compose exec playwright-cdp-selkies glxinfo -B` / `vainfo` (Intel/AMD) or `nvidia-smi` (NVIDIA), and with `chrome://gpu` in the streamed browser: WebGL should report the hardware renderer.
 
 ## Persistence
 

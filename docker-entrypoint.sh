@@ -48,6 +48,16 @@
 #                               flag; the compose file ships a default that
 #                               turns off the HTTPS-First/HTTPS-Upgrade
 #                               experiments so plain-http pages stay as-is)
+#   CHROMIUM_GPU=auto            GPU/rendering policy (device detection in
+#                               the chromium section): auto = hardware GL
+#                               when a GPU is passed into the container
+#                               (compose.gpu.yaml / compose.gpu-nvidia.yaml
+#                               overlay), SwiftShader software rendering
+#                               otherwise — WebGL always works; off = force
+#                               software rendering even with a GPU attached;
+#                               strict = never allow SwiftShader (anti-
+#                               fingerprinting): hardware GL only, WebGL
+#                               unavailable without a GPU
 #   CDP_INTERNAL_PORT=9221      chromium loopback DevTools port (behind nginx)
 #   CHROMIUM_HEADLESS=1          run the browser headless instead (default 0:
 #                                the browser window opens on the Xvfb display
@@ -101,6 +111,11 @@ CHROMIUM_LANG="${CHROMIUM_LANG:-en-US}"
 # default here on purpose: the compose file owns the default value; with a
 # bare `docker run` the flag is only passed when the variable is set non-empty.
 CHROMIUM_DISABLE_FEATURES="${CHROMIUM_DISABLE_FEATURES:-}"
+# Single GPU/rendering policy knob; the device detection lives in the
+# chromium section below. auto = hardware GL when a GPU is visible, else
+# SwiftShader software; off = always software (the historical behavior);
+# strict = hardware only, never allow SwiftShader.
+CHROMIUM_GPU="${CHROMIUM_GPU:-auto}"
 
 ENABLE_SELKIES="${ENABLE_SELKIES:-true}"
 ENABLE_CDP="${ENABLE_CDP:-true}"
@@ -187,6 +202,47 @@ if [ "${ENABLE_CDP}" = "true" ]; then
     CHROME_BIN="${CHROME_BIN:-$(echo /usr/local/share/ms-playwright/chromium-*/chrome-linux*/chrome)}"
     [ -x "${CHROME_BIN}" ] || die "chrome binary not found: ${CHROME_BIN}"
 
+    # --- GPU: hardware GL when the container owns a real GPU ---------------
+    # compose.gpu.yaml (Intel/AMD: /dev/dri passthrough) or
+    # compose.gpu-nvidia.yaml (nvidia runtime) pass a host GPU in; detect it
+    # here. Only DEVICE NODES count as evidence: /proc/driver/nvidia is
+    # visible in every container on a host with the kernel module loaded
+    # (it reflects the host kernel, not the container), and the nvidia
+    # toolkit only creates /dev/nvidiactl inside the container when the
+    # passthrough actually worked. A /dev/dri node owned by nvidia-drm is
+    # skipped — Mesa cannot drive it (only the injected nvidia GL stack can,
+    # detected via /dev/nvidiactl below). In "hw" mode chromium renders via
+    # Vulkan/ANGLE (see the --use-angle=vulkan note below), which needs no
+    # GL visuals from the software Xvfb display.
+    GPU_RENDER_NODE=""
+    for node in /dev/dri/renderD*; do
+        [ -e "${node}" ] || continue
+        grep -q 'DRIVER=nvidia' "/sys/class/drm/${node##*/}/device/uevent" \
+            2>/dev/null && continue
+        GPU_RENDER_NODE="${node}"
+        break
+    done
+    if [ -z "${GPU_RENDER_NODE}" ] && [ -e /dev/nvidiactl ]; then
+        GPU_RENDER_NODE="nvidia (/dev/nvidiactl)"
+    fi
+    if [ "${CHROMIUM_GPU}" = "auto" ]; then
+        if [ -n "${GPU_RENDER_NODE}" ]; then
+            CHROMIUM_GPU=hw
+        else
+            CHROMIUM_GPU=sw
+        fi
+    fi
+    # Render on the device when one is present, except in "off" mode ("off"
+    # forces the software path even with a GPU attached). "strict" keeps its
+    # name — the SwiftShader decision below needs to tell it apart — but
+    # still uses a present device.
+    if [ -n "${GPU_RENDER_NODE}" ] && [ "${CHROMIUM_GPU}" != "off" ]; then
+        GPU_HW=true
+    else
+        GPU_HW=false
+    fi
+    log "chromium: GPU mode=${CHROMIUM_GPU}${GPU_RENDER_NODE:+ (${GPU_RENDER_NODE})}"
+
     # Headed is the default so the browser window is visible in the Selkies
     # stream; but a headed browser needs the Xvfb display; without it
     # (ENABLE_SELKIES=false and no external display) fall back to headless.
@@ -203,13 +259,47 @@ if [ "${ENABLE_CDP}" = "true" ]; then
         # banner bar (verified pixel-level: the ~36px band disappears)
         --disable-infobars)
     if [ "${CHROMIUM_HEADLESS}" = "1" ]; then
-        CHROMIUM_FLAGS+=(--headless --disable-gpu)
+        # --disable-gpu only without a usable device: new headless renders
+        # on the GPU when one is passed in (see GPU detection above).
+        CHROMIUM_FLAGS+=(--headless)
+        [ "${GPU_HW}" = "true" ] || CHROMIUM_FLAGS+=(--disable-gpu)
     else
         # Headed on the Xvfb display (default): the browser window shows up in
         # the Selkies stream, so automation can be watched live.
         WIN_W="${SCREEN_GEOMETRY%%x*}"
         WIN_H="$(echo "${SCREEN_GEOMETRY}" | cut -dx -f2)"
         CHROMIUM_FLAGS+=(--window-size="${WIN_W},${WIN_H}" --start-maximized --no-first-run)
+    fi
+    # Hardware GL via the Vulkan/ANGLE backend. Explicit on purpose:
+    # chromium's automatic backend selection prefers the native-GL path,
+    # which cannot work on the software Xvfb display (no window-system GL
+    # visuals -> "Couldn't find an EGLConfig", the GPU process exits and
+    # chrome://gpu ends up all-disabled). Vulkan renders offscreen and
+    # presents to the X window via xcb, which needs no GL visuals.
+    # Verified on nvidia CDI passthrough (RTX 2080 Ti): WebGL then reports
+    # "ANGLE (NVIDIA, Vulkan 1.4.341 (NVIDIA GeForce RTX 2080 Ti))", while
+    # auto selection lands on SwiftShader and forced "--use-angle=gl" kills
+    # WebGL entirely. --enable-features=Vulkan additionally moves the
+    # display compositor (viz) onto Vulkan: without it viz composites in
+    # software and chrome://gpu reports WebGL/WebGPU as "enabled_readback"
+    # ("Hardware accelerated but at reduced performance" — GPU frames are
+    # read back into the CPU compositor). With it, verified on the AMD
+    # iGPU (RADV): gpu_compositing=enabled, webgl/webgpu=enabled (no
+    # readback). If the Vulkan stack is unusable, chromium falls back
+    # internally and SwiftShader (allowed below) keeps WebGL alive.
+    # Both are appended before CHROMIUM_EXTRA_ARGS so a user's own
+    # --enable-features there still wins (chromium keeps the last
+    # occurrence of a repeated switch).
+    if [ "${GPU_HW}" = "true" ]; then
+        CHROMIUM_FLAGS+=(--use-angle=vulkan --enable-features=Vulkan)
+    fi
+    # Software WebGL fallback: Chrome 137+ gates SwiftShader behind
+    # --enable-unsafe-swiftshader; without the switch WebGL is unavailable.
+    # Allowed in every mode except "strict" — the browser must never report
+    # a SwiftShader renderer there — so WebGL works without a GPU (auto/off)
+    # and survives a device that errors out mid-run (auto with hardware).
+    if [ "${CHROMIUM_GPU}" != "strict" ]; then
+        CHROMIUM_FLAGS+=(--enable-unsafe-swiftshader)
     fi
     # Dedicated --disable-features knob (CHROMIUM_DISABLE_FEATURES, fed from
     # .env by compose). Appended before CHROMIUM_EXTRA_ARGS so a manually

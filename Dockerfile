@@ -125,13 +125,31 @@ RUN apt-get update && \
 # (curl/ca-certificates are already installed above). libva2/mesa-va-drivers
 # cover the documented optional VA-API path for hardware H.264 on Intel/AMD
 # GPUs; NVENC comes from the host-injected NVIDIA driver.
+# GPU-passthrough userland (compose.gpu.yaml / compose.gpu-nvidia.yaml):
+# libgl1-mesa-dri = Mesa GL/EGL drivers (iris/radeonsi/...) so chromium can
+# render on a passed-through Intel/AMD GPU; mesa-vulkan-drivers + libvulkan1
+# = the Vulkan ICDs chromium's default ANGLE/Vulkan backend renders through
+# (works on the Xvfb display: offscreen rendering + xcb present, no
+# window-system GL visuals needed); intel-media-va-driver-non-free = Intel
+# VA-API for Broadwell+ (mesa-va-drivers already covers AMD and older
+# Intel); mesa-utils/vainfo/vulkan-tools = verification tools.
+# NVIDIA GL/EGL/Vulkan userland is intentionally NOT installed here — the
+# nvidia container toolkit injects host-matching libraries at runtime.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev jq xserver-xorg-core xvfb \
     x11-utils x11-xkb-utils x11-xserver-utils wmctrl libx11-xcb1 \
     libxcb-dri3-0 libxkbcommon0 libxdamage1 libxfixes3 libxtst6 \
-    libxext6 libpulse0 pulseaudio libva2 mesa-va-drivers && \
+    libxext6 libpulse0 pulseaudio libva2 mesa-va-drivers \
+    libgl1-mesa-dri intel-media-va-driver-non-free mesa-utils vainfo \
+    libvulkan1 mesa-vulkan-drivers vulkan-tools && \
     rm -rf /var/lib/apt/lists/*
+
+# The NVIDIA Vulkan ICD manifest (nvidia_icd.json) arrives with the toolkit
+# injection — CDI mounts it at /etc/vulkan/icd.d, the legacy hook at
+# /usr/share/vulkan/icd.d — and the Ubuntu loader scans both paths, so
+# nothing is baked here on purpose: a static copy would make the loader
+# enumerate the GPU twice (verified: GPU0/GPU1 duplicates).
 
 # Step 2: the Selkies Python package (wheel built in the selkies-build stage).
 # pip resolves pixelflux/pcmflux and the rest as prebuilt manylinux wheels, so
