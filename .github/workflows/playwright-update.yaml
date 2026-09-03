@@ -83,7 +83,7 @@ jobs:
       - name: Open / update the bump PR
         if: steps.update.outputs.changed == 'true'
         id: pr
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ env.PR_TOKEN }}
           branch: chore/playwright-update
