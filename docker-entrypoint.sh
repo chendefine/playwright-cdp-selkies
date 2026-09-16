@@ -73,6 +73,15 @@
 #                                floats around as a seemingly borderless
 #                                white sheet; false = no compositor (the
 #                                historical flat look)
+#   PORT_FORWARDS=""             extra reverse proxies served by nginx, e.g.
+#                                "3080=peer:80 6080=other:6080" (space or
+#                                comma separated): each LISTEN=HOST:PORT entry
+#                                makes nginx listen on container port LISTEN
+#                                and forward it to HOST:PORT — typically a
+#                                sibling container on the same docker network.
+#                                See the PORT_FORWARDS section below the nginx
+#                                front door for details (late peer startup,
+#                                WebSocket support, collision rules).
 set -uo pipefail
 
 log() { echo "[entrypoint] $*"; }
@@ -109,6 +118,10 @@ TLS_SELF_SIGNED_CN="${TLS_SELF_SIGNED_CN:-localhost}"
 TLS_FALLBACK_DIR="/etc/nginx/tls-selfsigned"
 
 CDP_INTERNAL_PORT="${CDP_INTERNAL_PORT:-9221}" # chromium loopback DevTools port
+
+# Extra reverse proxies served by the same nginx front door (empty = none).
+# Parsed and validated in the nginx section below.
+PORT_FORWARDS="${PORT_FORWARDS:-}"
 
 CHROMIUM_HEADLESS="${CHROMIUM_HEADLESS:-0}"
 CHROMIUM_START_URL="${CHROMIUM_START_URL:-about:blank}"
@@ -413,7 +426,9 @@ fi
 #   ${WEB_HTTP_PORT}  -> 127.0.0.1:${SELKIES_INTERNAL_PORT}  web UI, HTTP (always)
 #   ${WEB_HTTPS_PORT} -> 127.0.0.1:${SELKIES_INTERNAL_PORT}  web UI, TLS (optional)
 #   ${CDP_LISTEN_PORT} -> 127.0.0.1:${CDP_INTERNAL_PORT}     chromium CDP
-# Every proxy is WebSocket-capable (CDP and Selkies signaling both need it).
+# plus one listener per PORT_FORWARDS entry (same-network peers, see the
+# PORT_FORWARDS block above). Every proxy is WebSocket-capable (CDP and
+# Selkies signaling both need it).
 
 listen_ports=()
 upstream_ports=()
@@ -431,13 +446,71 @@ if [ "${ENABLE_CDP}" = "true" ]; then
     upstream_ports+=("${CDP_INTERNAL_PORT}")
 fi
 
+# --- extra port forwards (PORT_FORWARDS) --------------------------------------
+# PORT_FORWARDS="3080=peer:80 6080=other:6080" (space or comma separated) makes
+# nginx also listen on each LISTEN port and reverse-proxy it to HOST:PORT —
+# typically a sibling container on the same docker network, reached by
+# container name. Deliberate properties:
+#   * same nginx instance & lifecycle as every other listener (no extra
+#     process, no extra image dependency, dies with the container);
+#   * the http-level proxy defaults apply: WebSocket upgrade, 24h read/write
+#     timeouts, 50m bodies — forwarded apps that speak WS just work;
+#   * the peer hostname is resolved PER REQUEST via docker's embedded DNS
+#     (resolver below), not at config-parse time: this container starts fine
+#     while the peer is still down, and picks up its new IP after a recreate
+#     (valid=10s) — requests 502 until the peer answers, instead of the whole
+#     front door failing `nginx -t`;
+#   * HTTP reverse proxy, not a raw TCP pipe; an https:// upstream would need
+#     proxy_ssl on (not exposed as a knob — none of our peers speak TLS).
+FORWARD_SERVERS=""
+forward_listen_ports=()
+forward_targets=()
+if [ -n "${PORT_FORWARDS}" ]; then
+    for spec in $(printf '%s\n' "${PORT_FORWARDS}" | tr ',' ' '); do
+        [ -n "${spec}" ] || continue
+        case "${spec}" in
+            *=*) : ;;
+            *) die "PORT_FORWARDS entry '${spec}' must be LISTEN=HOST:PORT" ;;
+        esac
+        fwd_listen="${spec%%=*}"
+        fwd_target="${spec#*=}"
+        case "${fwd_listen}" in
+            ''|*[!0-9]*) die "PORT_FORWARDS listen port '${fwd_listen}' is not a number (entry '${spec}')" ;;
+        esac
+        case "${fwd_target}" in
+            *:*) : ;;
+            *) die "PORT_FORWARDS target '${fwd_target}' must be HOST:PORT (entry '${spec}')" ;;
+        esac
+        forward_listen_ports+=("${fwd_listen}")
+        forward_targets+=("${fwd_target}")
+        FORWARD_SERVERS="${FORWARD_SERVERS}
+$(cat <<EOF
+    # extra port forward ${fwd_listen} -> ${fwd_target} (PORT_FORWARDS)
+    server {
+        listen ${fwd_listen};
+        server_name _;
+        # docker's embedded DNS; per-request resolution keeps this listener
+        # (and the whole nginx) up while the peer container is down
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        location / {
+            # variable target => resolved at request time via the resolver
+            # above, NOT at config-parse time (nginx -t never needs the peer)
+            set \$fwd_upstream ${fwd_target};
+            proxy_pass http://\$fwd_upstream;
+        }
+    }
+EOF
+)"
+    done
+fi
+
 # A listener colliding with a loopback upstream would make nginx fail at bind
 # time with a cryptic error; fail fast with a clear one.
-all_ports=("${listen_ports[@]}" "${upstream_ports[@]}")
+all_ports=("${listen_ports[@]}" "${upstream_ports[@]}" "${forward_listen_ports[@]}")
 for i in "${!all_ports[@]}"; do
     for j in "${!all_ports[@]}"; do
         if [ "${i}" -lt "${j}" ] && [ "${all_ports[$i]}" = "${all_ports[$j]}" ]; then
-            die "port ${all_ports[$i]} is used more than once (listen: ${listen_ports[*]:-none}; upstream: ${upstream_ports[*]:-none})"
+            die "port ${all_ports[$i]} is used more than once (listen: ${listen_ports[*]:-none}; upstream: ${upstream_ports[*]:-none}; forwards: ${forward_listen_ports[*]:-none})"
         fi
     done
 done
@@ -656,6 +729,7 @@ http {
 
 ${WEB_SERVERS}
 ${CDP_SERVER}
+${FORWARD_SERVERS}
 }
 EOF
 
@@ -667,6 +741,9 @@ fronts=""
 [ "${ENABLE_SELKIES}" = "true" ] && fronts="http:${WEB_HTTP_PORT}"
 [ -n "${TLS_CERT}" ] && fronts="${fronts} https:${WEB_HTTPS_PORT}"
 [ "${ENABLE_CDP}" = "true" ] && fronts="${fronts} cdp:${CDP_LISTEN_PORT}"
+for i in "${!forward_listen_ports[@]}"; do
+    fronts="${fronts} fwd:${forward_listen_ports[$i]}->${forward_targets[$i]}"
+done
 log "starting nginx (${fronts:-no listeners}; host-side publishing is up to docker)"
 nginx -c "${NGINX_CONF}" &
 pids+=($!)

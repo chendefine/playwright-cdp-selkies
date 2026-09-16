@@ -113,6 +113,8 @@ Container ports are **fixed by design**; the variables pick only the **host-side
 | 443 | Web UI (HTTPS, opt-in) | 8443 | `NGINX_HTTPS_PORT` + [HTTPS](#https) |
 | 9222 | Chromium CDP | 9222 | `CDP_PORT` in `.env` |
 
+On top of these fixed ports, `PORT_FORWARDS` adds extra listeners that are reverse-proxied to sibling containers on the docker network — see [Docker network (compose)](#docker-network-compose).
+
 ## Connecting Playwright over CDP
 
 The image exposes Chromium's DevTools protocol through nginx, so any CDP client on your host (or anywhere reachable) can drive the browser. You do **not** need Playwright browsers installed locally.
@@ -186,6 +188,12 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `TLS_CERT_DIR` | `/etc/nginx/tls` | where certificates are looked up / generated |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | `$TLS_CERT_DIR/fullchain.pem` / `privkey.pem` | explicit cert/key paths |
 | `TLS_SELF_SIGNED_CN` | `localhost` | CN of the generated self-signed certificate |
+
+**Extra port forwards**
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT_FORWARDS` | *(empty)* | space/comma-separated `LISTEN=HOST:PORT` entries: nginx also listens on each `LISTEN` port and reverse-proxies it (WebSocket-capable) to `HOST:PORT` — typically a sibling container on the same docker network. See [Docker network (compose)](#docker-network-compose) |
 
 **Selkies**
 
@@ -286,6 +294,19 @@ NETWORK_NAME=existing NETWORK_EXTERNAL=true  # attach to an existing network,
 ```
 
 Prefer `NETWORK_EXTERNAL=true` for networks that already exist (older compose versions refuse to adopt them otherwise).
+
+Once the container shares a network with its siblings, `PORT_FORWARDS` exposes selected sibling services under container-local ports — handy when something inside this container (the browser, a script) expects `http://localhost:<port>`:
+
+```bash
+# .env — reach container web's GUI at http://localhost:3080
+# inside this container (its network-facing port is 80; its :3080 is
+# loopback-only inside that container and thus not addressable from here)
+PORT_FORWARDS=3080=web:80
+# multiple entries, space or comma separated:
+#PORT_FORWARDS=3080=web:80 6080=onlyoffice-documentserver:80
+```
+
+The forwards are served by the same nginx front door (no extra process): WebSocket-capable, per-request DNS resolution via docker's embedded DNS — this container starts fine while a peer is still down (requests 502 until the peer answers) and follows a recreated peer's new IP. A forward listen port must not collide with 80/443/9222 or any other forward.
 
 ## Service toggles, health and restarts
 

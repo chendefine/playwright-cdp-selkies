@@ -26,6 +26,9 @@
 #   Xvfb -> PulseAudio -> Selkies (loopback) -> Chromium -> nginx front door
 #   nginx serves: 80 (web UI, HTTP) + 443 (web UI, HTTPS, ENABLE_HTTPS=true)
 #                 + 9222 (chromium CDP endpoint)
+#                 + one listener per PORT_FORWARDS entry (extra forwards to
+#                   sibling containers on the same docker network — see the
+#                   environment: section)
 
 services:
   playwright-cdp-selkies:
@@ -87,6 +90,21 @@ services:
       # self-signed pair is generated once and then reused.
       ENABLE_HTTPS: "${ENABLE_HTTPS:-false}"
       #TLS_SELF_SIGNED_CN: "localhost" # CN of the generated self-signed certificate
+
+      # --- Extra port forwards (docker network) ---
+      # Space/comma-separated LISTEN=HOST:PORT entries: nginx also listens on
+      # each LISTEN port inside this container and reverse-proxies it
+      # (WebSocket-capable) to HOST:PORT — typically a sibling container on
+      # the same docker network, addressed by container name. The peer is
+      # resolved per request, so this container starts even while the peer is
+      # still down. The peer's port must be one it binds on its network
+      # address, not something it keeps on its own loopback (e.g. a sibling
+      # app container may serve its GUI on :80 network-wide while keeping
+      # an internal :3080 bound to its own loopback only).
+      # Example (reach container web's GUI at
+      # http://localhost:3080 inside this container):
+      #PORT_FORWARDS: "3080=web:80"
+      PORT_FORWARDS: "${PORT_FORWARDS:-}"
 
       # --- Selkies ---
       # Set a password to enable the login screen (username defaults to

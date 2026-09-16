@@ -113,6 +113,8 @@ docker run -d --name playwright-cdp-selkies \
 | 443 | Web UI(HTTPS,可选) | 8443 | `NGINX_HTTPS_PORT` + [HTTPS](#https-1) |
 | 9222 | Chromium CDP | 9222 | `.env` 里的 `CDP_PORT` |
 
+除这些固定端口外,`PORT_FORWARDS` 可以追加额外的监听端口,反向代理到 docker 网络里的兄弟容器 —— 见 [Docker 网络(compose)](#docker-网络compose)。
+
 ## 通过 CDP 接入 Playwright
 
 镜像把 Chromium 的 DevTools 协议经 nginx 对外暴露,宿主机(或任何可达网络)上的 CDP 客户端都能驱动这个浏览器,本地**无需**安装 Playwright 浏览器。
@@ -186,6 +188,12 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `TLS_CERT_DIR` | `/etc/nginx/tls` | 证书查找 / 生成目录 |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | `$TLS_CERT_DIR/fullchain.pem` / `privkey.pem` | 显式证书/私钥路径 |
 | `TLS_SELF_SIGNED_CN` | `localhost` | 生成的自签证书 CN |
+
+**额外端口转发**
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PORT_FORWARDS` | *(空)* | 空格/逗号分隔的 `LISTEN=HOST:PORT` 列表:nginx 额外监听每个 `LISTEN` 端口,反向代理(支持 WebSocket)到 `HOST:PORT` —— 通常是同一 docker 网络里的兄弟容器。详见 [Docker 网络(compose)](#docker-网络compose) |
 
 **Selkies**
 
@@ -286,6 +294,19 @@ NETWORK_NAME=existing NETWORK_EXTERNAL=true  # 接入已存在的网络,
 ```
 
 对已存在的网络请使用 `NETWORK_EXTERNAL=true`(旧版 compose 否则会报 incorrect label 错误)。
+
+容器与兄弟容器同网之后,`PORT_FORWARDS` 可以把选定的兄弟服务映射为本容器内的端口 —— 当本容器里的浏览器或脚本期望访问 `http://localhost:<端口>` 时特别有用:
+
+```bash
+# .env —— 在本容器内通过 http://localhost:3080 访问容器 web
+# 的 GUI(它对网络开放的端口是 80;它的 :3080 只绑在该容器自己的回环上,
+# 从外部无法寻址)
+PORT_FORWARDS=3080=web:80
+# 多条目,空格或逗号分隔:
+#PORT_FORWARDS=3080=web:80 6080=onlyoffice-documentserver:80
+```
+
+转发由同一个 nginx 前门提供(无额外进程):支持 WebSocket;经 docker 内嵌 DNS 按请求解析对端 —— 对端容器还没起来时本容器照常启动(对端上线前请求返回 502),对端重建换 IP 后也能自动跟上。转发监听端口不得与 80/443/9222 或其他转发端口冲突。
 
 ## 服务开关、健康检查与重启
 
