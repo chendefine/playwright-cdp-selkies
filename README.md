@@ -216,6 +216,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | --- | --- | --- |
 | `TZ` | `UTC` | container timezone (any IANA zone, e.g. `Asia/Shanghai`) |
 | `SCREEN_GEOMETRY` | `1920x1080x24` | Xvfb screen size `WxHxD`; also sizes the Selkies stream |
+| `ENABLE_COMPOSITOR` | `true` | run picom on the Xvfb display so Chromium popup menus (right-click context menu) keep their drop shadows — without a compositor they render as seemingly borderless white sheets; `false` = old flat look |
 | `SHM_SIZE` (compose) | `1gb` | `/dev/shm` size — Chromium needs more than the 64 MB docker default |
 
 ### Timezone and language

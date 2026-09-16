@@ -126,6 +126,11 @@ services:
       # --- Desktop ---
       # Xvfb screen geometry WxHxD; also sizes the Selkies stream
       SCREEN_GEOMETRY: "${SCREEN_GEOMETRY:-1920x1080x24}"
+      # Run a compositing manager (picom) on the Xvfb display. Without one
+      # chromium drops the alpha-blended shadows of its popup windows, so
+      # the right-click context menu shows up as a seemingly borderless
+      # white sheet on light pages. false = the old flat look.
+      ENABLE_COMPOSITOR: "${ENABLE_COMPOSITOR:-true}"
 
     healthcheck:
       # nginx answers 200 on / (fixed container port 80) once up, fronting

@@ -107,10 +107,13 @@ RUN apt-get update && \
 # Intel); mesa-utils/vainfo/vulkan-tools = verification tools.
 # NVIDIA GL/EGL/Vulkan userland is intentionally NOT installed here — the
 # nvidia container toolkit injects host-matching libraries at runtime.
+# picom = compositing manager for the Xvfb display: chromium only alpha-
+# blends its popup (context menu) shadows when a compositor is present, so
+# the entrypoint runs picom alongside Xvfb (see ENABLE_COMPOSITOR).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev jq xserver-xorg-core xvfb \
-    x11-utils x11-xkb-utils x11-xserver-utils wmctrl libx11-xcb1 \
+    x11-utils x11-xkb-utils x11-xserver-utils wmctrl picom libx11-xcb1 \
     libxcb-dri3-0 libxkbcommon0 libxdamage1 libxfixes3 libxtst6 \
     libxext6 libpulse0 pulseaudio libva2 mesa-va-drivers \
     libgl1-mesa-dri intel-media-va-driver-non-free mesa-utils vainfo \

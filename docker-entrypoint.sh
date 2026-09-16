@@ -3,6 +3,8 @@
 #
 # Starts, in order:
 #   1. Xvfb            virtual X11 display (Selkies captures it)
+#      picom           compositing manager for that display (keeps popup
+#                       menu shadows visible; see ENABLE_COMPOSITOR)
 #   2. PulseAudio      audio server (Selkies captures it via pcmflux)
 #   3. Selkies         HTML5 remote desktop on 127.0.0.1:${SELKIES_INTERNAL_PORT:-8081}
 #   4. Chromium        playwright-built browser with a CDP endpoint on loopback
@@ -64,6 +66,13 @@
 #                                and is visible live in the Selkies stream)
 #   ENABLE_SELKIES=true          set false to skip Selkies + display + audio
 #   ENABLE_CDP=true              set false to skip Chromium + the CDP gateway
+#   ENABLE_COMPOSITOR=true       run a compositing manager (picom) on the
+#                                Xvfb display. Without one chromium drops
+#                                the alpha-blended shadows of its popup
+#                                windows, so the right-click context menu
+#                                floats around as a seemingly borderless
+#                                white sheet; false = no compositor (the
+#                                historical flat look)
 set -uo pipefail
 
 log() { echo "[entrypoint] $*"; }
@@ -119,6 +128,9 @@ CHROMIUM_GPU="${CHROMIUM_GPU:-auto}"
 
 ENABLE_SELKIES="${ENABLE_SELKIES:-true}"
 ENABLE_CDP="${ENABLE_CDP:-true}"
+# picom is started together with Xvfb; the knob only makes sense when the
+# display exists (ENABLE_SELKIES=true) and is harmlessly ignored otherwise.
+ENABLE_COMPOSITOR="${ENABLE_COMPOSITOR:-true}"
 [ "${ENABLE_SELKIES}" = "true" ] || [ "${ENABLE_CDP}" = "true" ] \
     || die "nothing to start (ENABLE_SELKIES and ENABLE_CDP both false?)"
 
@@ -157,6 +169,31 @@ if [ "${ENABLE_SELKIES}" = "true" ]; then
     XSOCKET="/tmp/.X11-unix/X${DISPLAY#*:}"
     for _ in $(seq 1 50); do [ -S "${XSOCKET}" ] && break; sleep 0.2; done
     [ -S "${XSOCKET}" ] || die "Xvfb did not create ${XSOCKET}; see /tmp/xvfb.log"
+
+    # Compositing manager for the fresh display. No WM runs here and Xvfb
+    # has no compositor of its own, and without a compositing manager
+    # chromium refuses to alpha-blend its popup windows: the right-click
+    # context menu loses its drop shadow and — being a plain white sheet —
+    # looks borderless against light pages. picom only needs to RUN:
+    # chromium paints the shadow itself into an ARGB popup window, picom
+    # supplies the blending. picom's own decorations stay off (shadow=false)
+    # so nothing is painted on top of chromium's; the backend is pinned to
+    # xrender because the GLX backend has nothing to grab on the GL-less
+    # Xvfb display. Cosmetic, so a dead picom only warns.
+    if [ "${ENABLE_COMPOSITOR}" = "true" ]; then
+        if command -v picom >/dev/null 2>&1; then
+            printf 'shadow = false\nfading = false\nbackend = "xrender"\n' \
+                >/tmp/picom.conf
+            log "starting picom compositor on display ${DISPLAY}"
+            picom --config /tmp/picom.conf >/tmp/picom.log 2>&1 &
+            picom_pid=$!
+            pids+=("${picom_pid}")
+            sleep 0.5
+            kill -0 "${picom_pid}" 2>/dev/null || log "WARNING: picom exited early; popup menus will render without shadows (see /tmp/picom.log)"
+        else
+            log "WARNING: picom not found; popup menus will render without shadows (image built without picom?)"
+        fi
+    fi
 
     log "starting PulseAudio (socket ${PULSE_SERVER})"
     mkdir -p "${PULSE_RUNTIME_PATH}"
@@ -268,7 +305,16 @@ if [ "${ENABLE_CDP}" = "true" ]; then
         # the Selkies stream, so automation can be watched live.
         WIN_W="${SCREEN_GEOMETRY%%x*}"
         WIN_H="$(echo "${SCREEN_GEOMETRY}" | cut -dx -f2)"
-        CHROMIUM_FLAGS+=(--window-size="${WIN_W},${WIN_H}" --start-maximized --no-first-run)
+        # No window manager runs on this Xvfb display, so --start-maximized
+        # is inert; chrome would otherwise restore a stale window position
+        # from the persisted profile (e.g. +184+163, off the screen) and
+        # shaves 1px off a window size that exactly matches the screen.
+        # Pin the window to the top-left corner and ask for one extra pixel
+        # per axis: the result covers the screen exactly (the spillover is
+        # clipped by the screen edges).
+        CHROMIUM_FLAGS+=(--window-position="0,0" \
+            --window-size="$((WIN_W + 1)),$((WIN_H + 1))" \
+            --start-maximized --no-first-run)
     fi
     # Hardware GL via the Vulkan/ANGLE backend. Explicit on purpose:
     # chromium's automatic backend selection prefers the native-GL path,

@@ -216,6 +216,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | --- | --- | --- |
 | `TZ` | `UTC` | 容器时区(任意 IANA 时区,如 `Asia/Shanghai`) |
 | `SCREEN_GEOMETRY` | `1920x1080x24` | Xvfb 屏幕尺寸 `宽x高x深`;同时决定 Selkies 串流分辨率 |
+| `ENABLE_COMPOSITOR` | `true` | 在 Xvfb 显示器上运行合成器(picom),让 Chromium 的弹出菜单(右键菜单)保留投影 —— 没有合成器时菜单会渲染成看似无边框的白色贴片;`false` = 恢复旧的扁平外观 |
 | `SHM_SIZE`(compose) | `1gb` | `/dev/shm` 大小 —— Chromium 需要比 docker 默认 64 MB 更多的空间 |
 
 ### 时区与语言
