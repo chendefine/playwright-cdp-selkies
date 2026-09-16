@@ -1,33 +1,5 @@
 ## chendefine/playwright-cdp-selkies
 
-# === SELKIES WHEEL BUILD (auxiliary stage) ===
-# Latest upstream docs (docs/start.md + component.md "Python Application"):
-# the current Selkies is a single pure-Python wheel that bundles the HTML5 web
-# client and pulls pixelflux/pcmflux as dependencies. No release carries that
-# wheel yet (releases up to v1.6.2 and PyPI only have the legacy
-# selkies_gstreamer package), so per the documented "install from the most
-# recent commit" path the wheel is built here from source:
-#   1. scripts/ci/build-web.sh bundles the web client into
-#      src/selkies/selkies_web (a plain source checkout does NOT contain it),
-#   2. python -m build produces the py3-none-any wheel installed in the final
-#      stage below.
-# node:24 matches the Node version of the final image and satisfies the web
-# build; SELKIES_REF is pinned for reproducibility, override with
-# --build-arg SELKIES_REF=<sha|branch|tag>.
-FROM node:24-bookworm-slim AS selkies-build
-ARG SELKIES_REF=4f076052f1eb3214fbf80deed4b18e9e1329bd87
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 python3-pip git ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-WORKDIR /src
-RUN git init && \
-    git remote add origin https://github.com/selkies-project/selkies.git && \
-    git fetch --depth 1 origin "${SELKIES_REF}" && \
-    git checkout -q FETCH_HEAD && \
-    ./scripts/ci/build-web.sh && \
-    pip3 install --no-cache-dir --break-system-packages build && \
-    python3 -m build --wheel --outdir /dist
-
 FROM ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -151,17 +123,56 @@ RUN apt-get update && \
 # nothing is baked here on purpose: a static copy would make the loader
 # enumerate the GPU twice (verified: GPU0/GPU1 duplicates).
 
-# Step 2: the Selkies Python package (wheel built in the selkies-build stage).
-# pip resolves pixelflux/pcmflux and the rest as prebuilt manylinux wheels, so
-# no compiler is needed. Installs the `selkies`, `selkies-resize` and
+# Step 2: the Selkies Python package, installed from the official upstream
+# release artifacts (docs.selkies.io). Selkies 2.0 is a single pure-Python
+# wheel that bundles the HTML5 web client; the 2.0.0rc0 wheel ships only on
+# the GitHub release (RCs are not published to PyPI), and it pins
+# pixelflux~=2.1.0rc0 and pcmflux~=2.1.0rc0, which likewise exist only on
+# their own GitHub releases. All three wheels are therefore fetched pinned by
+# sha256 (digests from the GitHub release API) and installed together; pip
+# resolves the remaining dependencies from PyPI as prebuilt manylinux wheels,
+# so no compiler is needed. Installs the `selkies`, `selkies-resize` and
 # `selkies-gpu-probe` console commands.
-COPY --from=selkies-build /dist/selkies-*.whl /tmp/
-RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --no-cache-dir --force-reinstall \
-    /tmp/selkies-*.whl && \
-    rm -f /tmp/selkies-*.whl && \
+# ubuntu:24.04 ships Python 3.12 -> SELKIES_PYTAG=cp312; if the base image's
+# Python ever moves, bump SELKIES_PYTAG and the two dependency digests (the
+# selkies wheel itself is py3-none-any and arch-independent).
+ARG SELKIES_VERSION=2.0.0rc0
+ARG PIXELFLUX_VERSION=2.1.0rc0
+ARG PCMFLUX_VERSION=2.1.0rc0
+ARG SELKIES_PYTAG=cp312
+# sha256 of selkies-${SELKIES_VERSION}-py3-none-any.whl
+ARG SELKIES_SHA256=f080aea3dab0e926fafdf7a91e7d02c681f56ff02186264026716248a632238d
+# sha256 of pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_<arch>.whl
+ARG PIXELFLUX_SHA256_AMD64=a143af92bed38b75e60356227a587e8f8e20bc5e1c29511f7b02d245321b0ae7
+ARG PIXELFLUX_SHA256_ARM64=d2e95890da4f7d028063dc32d92a006fc430da163fc9ae5645da5bc27dce761e
+# sha256 of pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_<arch>.whl
+ARG PCMFLUX_SHA256_AMD64=25bb510c250587cbf178e8e83cbe8ac426db6978de16a8d7b40e742d780537aa
+ARG PCMFLUX_SHA256_ARM64=c659d589e38bd14d754b8b048a732486d953bdb29ccf78a1334be6c9534f7d32
+# TARGETARCH (amd64/arm64) is supplied automatically by the builder.
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+        amd64) WHL_ARCH=x86_64;  PXL_SHA="${PIXELFLUX_SHA256_AMD64}"; PCM_SHA="${PCMFLUX_SHA256_AMD64}" ;; \
+        arm64) WHL_ARCH=aarch64; PXL_SHA="${PIXELFLUX_SHA256_ARM64}"; PCM_SHA="${PCMFLUX_SHA256_ARM64}" ;; \
+        *) printf 'unsupported TARGETARCH: %s\n' "${TARGETARCH:-<unset>}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL --retry 3 -o "/tmp/selkies-${SELKIES_VERSION}-py3-none-any.whl" \
+        "https://github.com/selkies-project/selkies/releases/download/${SELKIES_VERSION}/selkies-${SELKIES_VERSION}-py3-none-any.whl" && \
+    echo "${SELKIES_SHA256}  /tmp/selkies-${SELKIES_VERSION}-py3-none-any.whl" | sha256sum -c - && \
+    curl -fsSL --retry 3 -o "/tmp/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" \
+        "https://github.com/selkies-project/pixelflux/releases/download/${PIXELFLUX_VERSION}/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" && \
+    echo "${PXL_SHA}  /tmp/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" | sha256sum -c - && \
+    curl -fsSL --retry 3 -o "/tmp/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" \
+        "https://github.com/selkies-project/pcmflux/releases/download/${PCMFLUX_VERSION}/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" && \
+    echo "${PCM_SHA}  /tmp/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" | sha256sum -c - && \
+    PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --no-cache-dir \
+        "/tmp/selkies-${SELKIES_VERSION}-py3-none-any.whl" \
+        "/tmp/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" \
+        "/tmp/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" && \
+    rm -f /tmp/selkies-*.whl /tmp/pixelflux-*.whl /tmp/pcmflux-*.whl && \
     rm -rf ~/.cache/pip && \
-    # smoke-test the console commands and the bundled web client
+    # smoke-test the console commands, the exact version and the bundled web client
     selkies --help >/dev/null && \
+    selkies --version | grep -qx "selkies ${SELKIES_VERSION}" && \
     command -v selkies-resize selkies-gpu-probe >/dev/null && \
     python3 -c "import importlib.resources as r; assert (r.files('selkies.selkies_web') / 'index.html').is_file(), 'web client missing'"
 

@@ -15,10 +15,10 @@ ignored:
   # package set so `docker build` picks up security updates. Rebuilds are not
   # meant to be bit-for-bit reproducible at the distro-package level (the
   # pieces that matter for reproducibility — Playwright, Node major, the
-  # Selkies ref — ARE pinned via build args).
+  # Selkies release wheels — ARE pinned, the latter by sha256 build args).
   - DL3008
-  # pip install of the locally built selkies wheel: its version is pinned by
-  # the SELKIES_REF build arg (the wheel is built from that exact commit).
+  # pip install of the Selkies release wheels: every wheel is downloaded and
+  # sha256-verified against build args before pip sees it.
   - DL3013
   # `npm install -g yarn` ships the yarn bundled with the current Node/npm
   # toolchain; pinning yarn independently would add churn without benefit.

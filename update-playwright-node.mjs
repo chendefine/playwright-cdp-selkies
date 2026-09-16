@@ -19,9 +19,6 @@
  *   node update-playwright-node.mjs 1.62.1          # pin a specific version
  *   node update-playwright-node.mjs --node 22       # force the Node major
  *   node update-playwright-node.mjs --check         # exit 1 on drift, change nothing
- *
- * The selkies-build stage tag (FROM node:<major>-bookworm-slim) is rewritten
- * as well so both stages stay on the same Node line.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -125,10 +122,6 @@ async function main() {
       subs: [
         [/^(ARG PLAYWRIGHT_VERSION=)\S*/m, `$1${pwVersion}`],
         [/^(ARG NODE_VERSION=)\S*/m, `$1${nodeMajor}`],
-        [
-          /^(FROM node:)\d+(-bookworm-slim AS selkies-build)$/m,
-          `$1${nodeMajor}$2`,
-        ],
       ],
     },
     {

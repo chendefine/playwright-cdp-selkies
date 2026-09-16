@@ -20,7 +20,7 @@ docker run ─┬─ Xvfb        虚拟显示(Selkies 采集的画面)
 ```
 
 * **带公开 CDP 端点的 Chromium** — 在容器*外部*用 `connectOverCDP("http://localhost:9222")` 接入 [Playwright](https://playwright.dev) / Puppeteer / Selenium。
-* **可实时观看的桌面** — 浏览器默认以**有头模式**运行在虚拟 X11 显示器上,[Selkies](https://github.com/selkies-project/selkies) 把画面(含音频)串流到任意浏览器(WebRTC/WebCodecs)。自动化过程实时可见、可交互。
+* **可实时观看的桌面** — 浏览器默认以**有头模式**运行在虚拟 X11 显示器上,[Selkies](https://github.com/selkies-project/selkies) 2.0 经 WebSocket/WebCodecs 把画面(含音频)串流到任意浏览器(WebRTC 可选)。自动化过程实时可见、可交互。
 * **持久化配置目录** — 通过 bind mount,cookies、登录态、扩展在容器重建后依然保留。
 * **支持 HTTPS** — 默认自动生成自签证书,也可挂载自己的证书;已存在的有效证书永远优先复用。
 * **合理的默认值** — UTC 时区、`en-US` 浏览器语言;两者都是一行环境变量即可覆盖。
@@ -161,7 +161,7 @@ await browser.close();  // 只关闭 CDP 会话,不关浏览器
 | --- | --- | --- |
 | `PLAYWRIGHT_VERSION` | `1.62.1` | npm 上的 playwright-core 版本(必须存在于 registry.npmjs.org) |
 | `NODE_VERSION` | `24` | Node.js 主版本(由 [`update-playwright-node.mjs`](#版本联动脚本) 保持同步) |
-| `SELKIES_REF` | 钉住的 SHA | 构建 Selkies wheel 所用的 git ref(sha/分支/标签) |
+| `SELKIES_VERSION` | `2.0.0rc0` | Selkies 上游 release;其 wheel 及 pixelflux/pcmflux 依赖 wheel 按钉住的 sha256 摘要下载(见 `Dockerfile`) |
 | `TZ` | `UTC` | 容器时区,以 `ENV TZ` 暴露(运行时可覆盖) |
 | `DOCKER_IMAGE_NAME_TEMPLATE` | `chendefine/playwright-cdp-selkies` | 传给 `playwright-core mark-docker-image` 的值 |
 
@@ -299,10 +299,7 @@ NETWORK_NAME=existing NETWORK_EXTERNAL=true  # 接入已存在的网络,
 docker compose build            # 或:docker build -t chendefine/playwright-cdp-selkies .
 ```
 
-这是一个多阶段 Dockerfile:
-
-1. `selkies-build`(node:24-bookworm-slim)从钉住的上游 commit 构建 Selkies wheel(其中打包了 HTML5 Web 客户端,普通源码 checkout 里没有),
-2. 最终 Ubuntu 24.04 阶段安装 Node.js、Playwright Chromium 及其系统依赖、nginx、Xvfb/PulseAudio 和 Selkies wheel —— 各自成层。
+单阶段 Dockerfile,各部分各自成层地安装:Node.js、Playwright Chromium 及其系统依赖、nginx、Xvfb/PulseAudio,以及 Selkies 官方 release wheel。Selkies 2.0.0rc0 及其 `pixelflux`/`pcmflux` 依赖只发布在 GitHub releases(不上 PyPI),三个 wheel 下载后按钉住的 sha256 摘要校验 —— 升级 `SELKIES_VERSION` 时需同步更新 `Dockerfile` 中的这些摘要。
 
 `docker build --check .` 通过,无警告。
 

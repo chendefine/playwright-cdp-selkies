@@ -20,7 +20,7 @@ docker run ─┬─ Xvfb        virtual display (what Selkies streams)
 ```
 
 * **Chromium with a public CDP endpoint** — connect [Playwright](https://playwright.dev) / Puppeteer / Selenium from *outside* the container via `connectOverCDP("http://localhost:9222")`.
-* **Live-viewable desktop** — the browser runs **headed** on a virtual X11 display by default, and [Selkies](https://github.com/selkies-project/selkies) streams it to any browser (WebRTC/WebCodecs, audio included). Watch and interact with your automation as it runs.
+* **Live-viewable desktop** — the browser runs **headed** on a virtual X11 display by default, and [Selkies](https://github.com/selkies-project/selkies) 2.0 streams it to any browser over WebSockets/WebCodecs (WebRTC opt-in, audio included). Watch and interact with your automation as it runs.
 * **Persistent profile** — cookies, logins and extensions survive container recreation via a bind mount.
 * **HTTPS support** — self-signed by default, or bring your own certificate; existing valid pairs are always reused.
 * **Sane defaults** — UTC timezone, `en-US` browser locale; both are one-line overrides.
@@ -161,7 +161,7 @@ Everything is configured via environment variables; with Compose, put them in `.
 | --- | --- | --- |
 | `PLAYWRIGHT_VERSION` | `1.62.1` | playwright-core version from npm (must exist on registry.npmjs.org) |
 | `NODE_VERSION` | `24` | Node.js major (kept in sync by [`update-playwright-node.mjs`](#keeping-versions-in-sync)) |
-| `SELKIES_REF` | pinned SHA | git ref (sha/branch/tag) the Selkies wheel is built from |
+| `SELKIES_VERSION` | `2.0.0rc0` | Selkies upstream release; its wheels and the pixelflux/pcmflux dependency wheels are fetched sha256-pinned (see `Dockerfile`) |
 | `TZ` | `UTC` | container timezone, exposed as `ENV TZ` (runtime-overridable) |
 | `DOCKER_IMAGE_NAME_TEMPLATE` | `chendefine/playwright-cdp-selkies` | value passed to `playwright-core mark-docker-image` |
 
@@ -299,10 +299,7 @@ Prefer `NETWORK_EXTERNAL=true` for networks that already exist (older compose ve
 docker compose build            # or: docker build -t chendefine/playwright-cdp-selkies .
 ```
 
-The build is a multi-stage Dockerfile:
-
-1. `selkies-build` (node:24-bookworm-slim) builds the Selkies wheel from a pinned upstream commit (it bundles the HTML5 web client, which a plain source checkout lacks),
-2. the final Ubuntu 24.04 stage installs Node.js, Playwright Chromium + its system deps, nginx, Xvfb/PulseAudio and the Selkies wheel — each in its own layer.
+The single-stage Dockerfile installs, each in its own layer: Node.js, Playwright Chromium + its system deps, nginx, Xvfb/PulseAudio, and the official Selkies release wheels. Selkies 2.0.0rc0 and its `pixelflux`/`pcmflux` dependencies are GitHub-release-only (not on PyPI), so the three wheels are downloaded and verified against pinned sha256 digests — bumping `SELKIES_VERSION` also means updating those digests in the `Dockerfile`.
 
 `docker build --check .` passes with no warnings.
 
