@@ -3,7 +3,7 @@
 # Pipeline (daily cron + manual dispatch):
 #   1. update-playwright-node.mjs resolves the latest playwright-core from npm
 #      (and the matching Node LTS major) and re-pins Dockerfile / compose.yaml /
-#      .env.example,
+#      .env.example / the README build-arg tables,
 #   2. a PR is opened with the re-pin diff,
 #   3. ci.yaml runs on the PR (lint + full build + smoke tests) — this needs
 #      the optional PLAYWRIGHT_UPDATE_TOKEN secret (see README): PRs created

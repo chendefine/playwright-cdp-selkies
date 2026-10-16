@@ -161,7 +161,7 @@ Everything is configured via environment variables; with Compose, put them in `.
 
 | Arg | Default | Description |
 | --- | --- | --- |
-| `PLAYWRIGHT_VERSION` | `1.62.1` | playwright-core version from npm (must exist on registry.npmjs.org) |
+| `PLAYWRIGHT_VERSION` | `1.64.1` | playwright-core version from npm (must exist on registry.npmjs.org) |
 | `NODE_VERSION` | `24` | Node.js major (kept in sync by [`update-playwright-node.mjs`](#keeping-versions-in-sync)) |
 | `SELKIES_VERSION` | `2.0.0` | Selkies upstream release; its wheels and the pixelflux/pcmflux dependency wheels are fetched sha256-pinned (see `Dockerfile`) |
 | `TZ` | `UTC` | container timezone, exposed as `ENV TZ` (runtime-overridable) |

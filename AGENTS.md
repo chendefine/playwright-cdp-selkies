@@ -21,7 +21,7 @@ image build + runtime smoke tests.
 | `compose.yaml` | Base stack; reads `.env` (`env_file` passes unlisted vars through, e.g. native `SELKIES_*`) |
 | `compose.https.yaml`, `compose.gpu.yaml`, `compose.gpu-nvidia.yaml` | Opt-in overlays (HTTPS publishing; Intel/AMD `/dev/dri`; NVIDIA CDI) |
 | `.env.example` | Every runtime knob, documented |
-| `update-playwright-node.mjs` | Version-sync script — rewrites the Playwright/Node pins in `Dockerfile` + `compose.yaml` + `.env.example` together |
+| `update-playwright-node.mjs` | Version-sync script — rewrites the Playwright/Node pins in `Dockerfile` + `compose.yaml` + `.env.example` + the README build-arg tables together |
 | `.github/workflows/ci.yaml` | lint → build → smoke tests → release-tag → publish (GHCR + Docker Hub) |
 | `.github/workflows/playwright-update.yaml` | Daily cron: re-pin → bump PR → auto-merge → release |
 | `examples/` | CDP client examples (`connect-playwright.mjs`, `webgl-renderer-probe.mjs`) |
@@ -75,10 +75,12 @@ node update-playwright-node.mjs --check    # CI drift mode: exit 1 on drift
 ## Hard rules
 
 1. **Never hand-edit the Playwright/Node pins.** They live in three files
-   (`Dockerfile`, `compose.yaml`, `.env.example`); only
-   `update-playwright-node.mjs` keeps them in sync. Also never hardcode the
-   pinned version in docs or comments — link to the Dockerfile instead (the
-   READMEs have drifted before).
+   (`Dockerfile`, `compose.yaml`, `.env.example`) plus the mirrored
+   build-arg default tables in both READMEs; only
+   `update-playwright-node.mjs` keeps them all in sync (the README tables
+   used to drift before the script covered them). Beyond those tables,
+   never hardcode the pinned version in docs or comments — link to the
+   Dockerfile instead.
 2. **A `SELKIES_VERSION` bump means new wheel digests**: update
    `SELKIES_SHA256`, `PIXELFLUX_SHA256_{AMD64,ARM64}` and
    `PCMFLUX_SHA256_{AMD64,ARM64}` in the Dockerfile (digests from the GitHub

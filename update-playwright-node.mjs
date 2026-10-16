@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * update-playwright-node.mjs — keep the pinned Playwright + Node.js versions
- * in sync across the repo (Dockerfile, compose.yaml, .env.example).
+ * in sync across the repo (Dockerfile, compose.yaml, .env.example, and the
+ * build-arg default tables in README.md / README.zh-CN.md).
  *
  * The Node major that pairs with a Playwright release is derived from live
  * metadata instead of guesswork:
@@ -139,6 +140,22 @@ async function main() {
       subs: [
         [/^(#PLAYWRIGHT_VERSION=)\S*/m, `$1${pwVersion}`],
         [/^(#NODE_VERSION=)\S*/m, `$1${nodeMajor}`],
+      ],
+    },
+    // The README build-arg tables mirror the same defaults (docs are a
+    // deliverable); keep them riding along so they cannot drift again.
+    {
+      file: "README.md",
+      subs: [
+        [/^(\| `PLAYWRIGHT_VERSION` \| `)[^`]+(`)/m, `$1${pwVersion}$2`],
+        [/^(\| `NODE_VERSION` \| `)[^`]+(`)/m, `$1${nodeMajor}$2`],
+      ],
+    },
+    {
+      file: "README.zh-CN.md",
+      subs: [
+        [/^(\| `PLAYWRIGHT_VERSION` \| `)[^`]+(`)/m, `$1${pwVersion}$2`],
+        [/^(\| `NODE_VERSION` \| `)[^`]+(`)/m, `$1${nodeMajor}$2`],
       ],
     },
   ];

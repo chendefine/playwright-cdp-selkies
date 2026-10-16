@@ -161,7 +161,7 @@ await browser.close();  // 只关闭 CDP 会话,不关浏览器
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `PLAYWRIGHT_VERSION` | `1.62.1` | npm 上的 playwright-core 版本(必须存在于 registry.npmjs.org) |
+| `PLAYWRIGHT_VERSION` | `1.64.1` | npm 上的 playwright-core 版本(必须存在于 registry.npmjs.org) |
 | `NODE_VERSION` | `24` | Node.js 主版本(由 [`update-playwright-node.mjs`](#版本联动脚本) 保持同步) |
 | `SELKIES_VERSION` | `2.0.0` | Selkies 上游 release;其 wheel 及 pixelflux/pcmflux 依赖 wheel 按钉住的 sha256 摘要下载(见 `Dockerfile`) |
 | `TZ` | `UTC` | 容器时区,以 `ENV TZ` 暴露(运行时可覆盖) |
@@ -327,7 +327,7 @@ docker compose build            # 或:docker build -t chendefine/playwright-cdp-
 
 ## 版本联动脚本
 
-[`update-playwright-node.mjs`](update-playwright-node.mjs) 基于实时元数据(npm 的 `engines.node` + Node.js 发布索引;选择满足 Playwright 下限的最新 LTS 主版本)统一重钉 `Dockerfile`、`compose.yaml`、`.env.example` 中的 Playwright 与 Node 版本:
+[`update-playwright-node.mjs`](update-playwright-node.mjs) 基于实时元数据(npm 的 `engines.node` + Node.js 发布索引;选择满足 Playwright 下限的最新 LTS 主版本)统一重钉 `Dockerfile`、`compose.yaml`、`.env.example` 以及两个 README 构建参数默认值表格中的 Playwright 与 Node 版本:
 
 ```bash
 node update-playwright-node.mjs            # 钉到最新 playwright-core
