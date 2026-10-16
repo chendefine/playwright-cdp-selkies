@@ -128,29 +128,28 @@ RUN apt-get update && \
 
 # Step 2: the Selkies Python package, installed from the official upstream
 # release artifacts (docs.selkies.io). Selkies 2.0 is a single pure-Python
-# wheel that bundles the HTML5 web client; the 2.0.0rc0 wheel ships only on
-# the GitHub release (RCs are not published to PyPI), and it pins
-# pixelflux~=2.1.0rc0 and pcmflux~=2.1.0rc0, which likewise exist only on
-# their own GitHub releases. All three wheels are therefore fetched pinned by
-# sha256 (digests from the GitHub release API) and installed together; pip
-# resolves the remaining dependencies from PyPI as prebuilt manylinux wheels,
-# so no compiler is needed. Installs the `selkies`, `selkies-resize` and
+# wheel that bundles the HTML5 web client; it pins matching pixelflux/pcmflux
+# releases (the *_VERSION args below). All three wheels are also on PyPI, but
+# the GitHub release assets are the ones fetched here, pinned by sha256
+# (digests from the GitHub release API) and installed together; pip resolves
+# the remaining dependencies from PyPI as prebuilt manylinux wheels, so no
+# compiler is needed. Installs the `selkies`, `selkies-resize` and
 # `selkies-gpu-probe` console commands.
 # ubuntu:24.04 ships Python 3.12 -> SELKIES_PYTAG=cp312; if the base image's
 # Python ever moves, bump SELKIES_PYTAG and the two dependency digests (the
 # selkies wheel itself is py3-none-any and arch-independent).
-ARG SELKIES_VERSION=2.0.0rc0
-ARG PIXELFLUX_VERSION=2.1.0rc0
-ARG PCMFLUX_VERSION=2.1.0rc0
+ARG SELKIES_VERSION=2.0.0
+ARG PIXELFLUX_VERSION=2.1.0
+ARG PCMFLUX_VERSION=2.1.0
 ARG SELKIES_PYTAG=cp312
 # sha256 of selkies-${SELKIES_VERSION}-py3-none-any.whl
-ARG SELKIES_SHA256=f080aea3dab0e926fafdf7a91e7d02c681f56ff02186264026716248a632238d
+ARG SELKIES_SHA256=f2777e74d191e2b5063190d40bfc6df00d7a77930620e0048a79267f211cbead
 # sha256 of pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_<arch>.whl
-ARG PIXELFLUX_SHA256_AMD64=a143af92bed38b75e60356227a587e8f8e20bc5e1c29511f7b02d245321b0ae7
-ARG PIXELFLUX_SHA256_ARM64=d2e95890da4f7d028063dc32d92a006fc430da163fc9ae5645da5bc27dce761e
+ARG PIXELFLUX_SHA256_AMD64=776bb8e80970a2d07d391cf043b77a6cb203cfdff565dd43713dd07ce9bdf257
+ARG PIXELFLUX_SHA256_ARM64=b2627fc29cc541b587ff09261a6a95479c549e4f95609f9789a7bf08f79e10b1
 # sha256 of pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_<arch>.whl
-ARG PCMFLUX_SHA256_AMD64=25bb510c250587cbf178e8e83cbe8ac426db6978de16a8d7b40e742d780537aa
-ARG PCMFLUX_SHA256_ARM64=c659d589e38bd14d754b8b048a732486d953bdb29ccf78a1334be6c9534f7d32
+ARG PCMFLUX_SHA256_AMD64=566fbb9e4af3534906adf757e860921679cd9c3cec3894b0de4fc700c75c5a73
+ARG PCMFLUX_SHA256_ARM64=694369625570b15fa061a717a2008885b87c5fde8cfcfac4f7f2971824b353df
 # TARGETARCH (amd64/arm64) is supplied automatically by the builder.
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in \

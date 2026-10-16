@@ -163,7 +163,7 @@ Everything is configured via environment variables; with Compose, put them in `.
 | --- | --- | --- |
 | `PLAYWRIGHT_VERSION` | `1.62.1` | playwright-core version from npm (must exist on registry.npmjs.org) |
 | `NODE_VERSION` | `24` | Node.js major (kept in sync by [`update-playwright-node.mjs`](#keeping-versions-in-sync)) |
-| `SELKIES_VERSION` | `2.0.0rc0` | Selkies upstream release; its wheels and the pixelflux/pcmflux dependency wheels are fetched sha256-pinned (see `Dockerfile`) |
+| `SELKIES_VERSION` | `2.0.0` | Selkies upstream release; its wheels and the pixelflux/pcmflux dependency wheels are fetched sha256-pinned (see `Dockerfile`) |
 | `TZ` | `UTC` | container timezone, exposed as `ENV TZ` (runtime-overridable) |
 | `DOCKER_IMAGE_NAME_TEMPLATE` | `chendefine/playwright-cdp-selkies` | value passed to `playwright-core mark-docker-image` |
 
@@ -321,7 +321,7 @@ The forwards are served by the same nginx front door (no extra process): WebSock
 docker compose build            # or: docker build -t chendefine/playwright-cdp-selkies .
 ```
 
-The single-stage Dockerfile installs, each in its own layer: Node.js, Playwright Chromium + its system deps, nginx, Xvfb/PulseAudio, and the official Selkies release wheels. Selkies 2.0.0rc0 and its `pixelflux`/`pcmflux` dependencies are GitHub-release-only (not on PyPI), so the three wheels are downloaded and verified against pinned sha256 digests — bumping `SELKIES_VERSION` also means updating those digests in the `Dockerfile`.
+The single-stage Dockerfile installs, each in its own layer: Node.js, Playwright Chromium + its system deps, nginx, Xvfb/PulseAudio, and the official Selkies release wheels. Selkies and its `pixelflux`/`pcmflux` dependencies are downloaded from their GitHub releases and verified against pinned sha256 digests — bumping `SELKIES_VERSION` also means updating those digests in the `Dockerfile`.
 
 `docker build --check .` passes with no warnings.
 

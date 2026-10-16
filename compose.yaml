@@ -41,7 +41,7 @@ services:
         NODE_VERSION: "${NODE_VERSION:-24}"
         # Selkies upstream release; its wheels (and the pixelflux/pcmflux
         # dependency wheels) are fetched and sha256-pinned in the Dockerfile
-        SELKIES_VERSION: "${SELKIES_VERSION:-2.0.0rc0}"
+        SELKIES_VERSION: "${SELKIES_VERSION:-2.0.0}"
     image: chendefine/playwright-cdp-selkies:latest
     container_name: playwright-cdp-selkies
     hostname: playwright-cdp-selkies

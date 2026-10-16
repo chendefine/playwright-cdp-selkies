@@ -163,7 +163,7 @@ await browser.close();  // 只关闭 CDP 会话,不关浏览器
 | --- | --- | --- |
 | `PLAYWRIGHT_VERSION` | `1.62.1` | npm 上的 playwright-core 版本(必须存在于 registry.npmjs.org) |
 | `NODE_VERSION` | `24` | Node.js 主版本(由 [`update-playwright-node.mjs`](#版本联动脚本) 保持同步) |
-| `SELKIES_VERSION` | `2.0.0rc0` | Selkies 上游 release;其 wheel 及 pixelflux/pcmflux 依赖 wheel 按钉住的 sha256 摘要下载(见 `Dockerfile`) |
+| `SELKIES_VERSION` | `2.0.0` | Selkies 上游 release;其 wheel 及 pixelflux/pcmflux 依赖 wheel 按钉住的 sha256 摘要下载(见 `Dockerfile`) |
 | `TZ` | `UTC` | 容器时区,以 `ENV TZ` 暴露(运行时可覆盖) |
 | `DOCKER_IMAGE_NAME_TEMPLATE` | `chendefine/playwright-cdp-selkies` | 传给 `playwright-core mark-docker-image` 的值 |
 
@@ -321,7 +321,7 @@ PORT_FORWARDS=3080=web:80
 docker compose build            # 或:docker build -t chendefine/playwright-cdp-selkies .
 ```
 
-单阶段 Dockerfile,各部分各自成层地安装:Node.js、Playwright Chromium 及其系统依赖、nginx、Xvfb/PulseAudio,以及 Selkies 官方 release wheel。Selkies 2.0.0rc0 及其 `pixelflux`/`pcmflux` 依赖只发布在 GitHub releases(不上 PyPI),三个 wheel 下载后按钉住的 sha256 摘要校验 —— 升级 `SELKIES_VERSION` 时需同步更新 `Dockerfile` 中的这些摘要。
+单阶段 Dockerfile,各部分各自成层地安装:Node.js、Playwright Chromium 及其系统依赖、nginx、Xvfb/PulseAudio,以及 Selkies 官方 release wheel。Selkies 及其 `pixelflux`/`pcmflux` 依赖从各自的 GitHub release 下载,并按钉住的 sha256 摘要校验 —— 升级 `SELKIES_VERSION` 时需同步更新 `Dockerfile` 中的这些摘要。
 
 `docker build --check .` 通过,无警告。
 
