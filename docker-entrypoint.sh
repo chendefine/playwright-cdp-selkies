@@ -94,6 +94,12 @@
 #                                floats around as a seemingly borderless
 #                                white sheet; false = no compositor (the
 #                                historical flat look)
+#   CHROMIUM_FOLLOW_SCREEN=true  keep the headed chromium browser window
+#                                covering the whole display when the screen
+#                                size changes (Selkies' browser-driven
+#                                resize). No window manager runs on Xvfb, so
+#                                without it the window keeps its startup
+#                                size; false = the window stays as launched
 #   PORT_FORWARDS=""             extra reverse proxies served by nginx, e.g.
 #                                "3080=peer:80 6080=other:6080" (space or
 #                                comma separated): each LISTEN=HOST:PORT entry
@@ -211,6 +217,9 @@ ENABLE_CDP="${ENABLE_CDP:-true}"
 # picom is started together with Xvfb; the knob only makes sense when the
 # display exists (ENABLE_SELKIES=true) and is harmlessly ignored otherwise.
 ENABLE_COMPOSITOR="${ENABLE_COMPOSITOR:-true}"
+# Screen follower for the headed chromium window (started next to chromium,
+# see section 5); ignored when chromium runs headless.
+CHROMIUM_FOLLOW_SCREEN="${CHROMIUM_FOLLOW_SCREEN:-true}"
 [ "${ENABLE_SELKIES}" = "true" ] || [ "${ENABLE_CDP}" = "true" ] \
     || die "nothing to start (ENABLE_SELKIES and ENABLE_CDP both false?)"
 
@@ -582,6 +591,71 @@ if [ "${ENABLE_CDP}" = "true" ]; then
         # expansion this replaces, but robust for the array append
         read -r -a extra_flags <<< "${CHROMIUM_EXTRA_ARGS}"
         CHROMIUM_FLAGS+=("${extra_flags[@]}")
+    fi
+
+    # Screen follower. The launch flags above size the window for the
+    # startup screen only, and no window manager runs on this display to
+    # re-maximize it, so after Selkies' browser-driven resize the window
+    # stayed at SCREEN_GEOMETRY: a larger screen showed it in one corner
+    # next to black, a smaller one cropped it. A RandR size change reaches
+    # the root window as a ConfigureNotify; on each one (and on every newly
+    # mapped window) the follower moves chromium's main windows
+    # (WM_WINDOW_ROLE "browser") to 0,0 at the full screen size. Popups,
+    # app windows and undocked DevTools carry other roles and stay as
+    # chromium placed them. Started before chromium so the first window is
+    # caught at map time. Cosmetic, so a missing python3-xlib only warns.
+    if [ "${CHROMIUM_HEADLESS}" = "0" ] && [ "${CHROMIUM_FOLLOW_SCREEN}" = "true" ]; then
+        if python3 -c 'import Xlib' 2>/dev/null; then
+            cat >/tmp/chromium-follow-screen.py <<'PYFOLLOW'
+from Xlib import X, display, error
+
+d = display.Display()
+d.set_error_handler(lambda *_: None)  # windows may vanish mid-configure
+root = d.screen().root
+ROLE = d.intern_atom("WM_WINDOW_ROLE")
+root.change_attributes(event_mask=X.StructureNotifyMask | X.SubstructureNotifyMask)
+
+
+def fit(win, w, h):
+    try:
+        if win.get_attributes().override_redirect:
+            return
+        role = win.get_full_property(ROLE, X.AnyPropertyType)
+        if not role or role.value != b"browser":
+            return
+        g = win.get_geometry()
+        if (g.x, g.y, g.width, g.height) == (0, 0, w, h):
+            return
+        win.configure(x=0, y=0, width=w, height=h)
+        print(f"0x{win.id:x}: {g.width}x{g.height}+{g.x}+{g.y} -> {w}x{h}+0+0", flush=True)
+    except error.XError:
+        pass
+
+
+def fit_all():
+    g = root.get_geometry()
+    for win in root.query_tree().children:
+        fit(win, g.width, g.height)
+    d.flush()
+
+
+fit_all()
+while True:
+    ev = d.next_event()
+    if ev.type == X.ConfigureNotify and ev.window.id == root.id:
+        fit_all()
+    elif ev.type == X.MapNotify:
+        g = root.get_geometry()
+        fit(ev.window, g.width, g.height)
+        d.flush()
+PYFOLLOW
+            log "starting chromium screen follower on display ${DISPLAY}"
+            "${DROP[@]}" python3 -u /tmp/chromium-follow-screen.py \
+                >/tmp/chromium-follow-screen.log 2>&1 &
+            pids+=($!)
+        else
+            log "WARNING: python3-xlib not found; the chromium window keeps its startup size when the screen is resized (image built without python3-xlib?)"
+        fi
     fi
 
     log "starting chromium (headless=${CHROMIUM_HEADLESS}) with CDP on 127.0.0.1:${CDP_INTERNAL_PORT}"

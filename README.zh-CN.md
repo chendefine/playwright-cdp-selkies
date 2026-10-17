@@ -234,6 +234,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `SCREEN_GEOMETRY_MAX` | `8192x4096x24` | Xvfb 创建屏幕时的 RandR 上限 `宽x高x深`,使 Selkies 动态分辨率(浏览器窗口大小 → 虚拟显示器分辨率,需 `SELKIES_ENABLE_RESIZE=true`)可以超过 `SCREEN_GEOMETRY` 向上调整;启动时再把工作尺寸经 RandR 预设回来。留空 = 固定为 `SCREEN_GEOMETRY` 的屏幕(大于该尺寸的浏览器窗口只能被裁切显示) |
 | `DISPLAY`           | `:0`           | Xvfb 的 display;若该编号在当前网络命名空间里已被占用(在跑着 X/Xwayland 的机器上使用 host 网络),自动换用下一个空闲编号并记录日志                                                                                      |
 | `ENABLE_COMPOSITOR` | `true`         | 在 Xvfb 显示器上运行合成器(picom),让 Chromium 的弹出菜单(右键菜单)保留投影 —— 没有合成器时菜单会渲染成看似无边框的白色贴片;`false` = 恢复旧的扁平外观                                                                |
+| `CHROMIUM_FOLLOW_SCREEN` | `true` | 屏幕尺寸改变时(Selkies 按浏览器窗口动态调整分辨率,见 `SCREEN_GEOMETRY_MAX`)让有头 Chromium 窗口始终铺满整个显示器 —— Xvfb 上没有窗口管理器,否则窗口保持启动时的尺寸(屏幕变大时周围是黑边,变小时被裁切);只调整浏览器主窗口,弹出窗口和独立的 DevTools 窗口保持各自尺寸;`false` = 窗口保持启动时的样子 |
 | `SHM_SIZE`(compose) | `1gb`          | `/dev/shm` 大小 —— Chromium 需要比 docker 默认 64 MB 更多的空间                                                                                                                                                      |
 | `RUN_USER`          | *(空)*         | 桌面栈(Xvfb、picom、PulseAudio、selkies、chromium)与 nginx *worker* 以该用户而非 root 运行 —— 已存在的用户名(如 `pwuser`)或 `uid[:gid]`;PID 1 与 nginx master 保持 root。见[权限降级(`RUN_USER`)](#权限降级run_user) |
 

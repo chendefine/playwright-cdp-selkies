@@ -112,12 +112,15 @@ RUN apt-get update && \
 # picom = compositing manager for the Xvfb display: chromium only alpha-
 # blends its popup (context menu) shadows when a compositor is present, so
 # the entrypoint runs picom alongside Xvfb (see ENABLE_COMPOSITOR).
+# python3-xlib = the entrypoint's screen follower: no window manager runs on
+# the Xvfb display, so it keeps the chromium window sized to the screen when
+# Selkies resizes it (see CHROMIUM_FOLLOW_SCREEN).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev jq xserver-xorg-core xvfb \
-    x11-utils x11-xkb-utils x11-xserver-utils wmctrl picom libx11-xcb1 \
-    libxcb-dri3-0 libxkbcommon0 libxdamage1 libxfixes3 libxtst6 \
-    libxext6 libpulse0 pulseaudio libva2 mesa-va-drivers \
+    x11-utils x11-xkb-utils x11-xserver-utils wmctrl picom python3-xlib \
+    libx11-xcb1 libxcb-dri3-0 libxkbcommon0 libxdamage1 libxfixes3 \
+    libxtst6 libxext6 libpulse0 pulseaudio libva2 mesa-va-drivers \
     libgl1-mesa-dri intel-media-va-driver-non-free mesa-utils vainfo \
     libvulkan1 mesa-vulkan-drivers vulkan-tools && \
     rm -rf /var/lib/apt/lists/*
