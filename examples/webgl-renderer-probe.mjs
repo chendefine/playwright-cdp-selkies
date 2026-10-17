@@ -72,11 +72,15 @@ const getJson = (path) => new Promise((res, rej) =>
     let b = ""; r.on("data", (d) => (b += d)); r.on("end", () => res(JSON.parse(b)));
   }).on("error", rej));
 
-const targets = await getJson("/json/list");
-const page = targets.find((t) => t.type === "page");
-if (!page) { console.error("no page target"); process.exit(1); }
-console.log(`target: ${page.url}`);
-const cdp = await wsConnect(new URL(page.webSocketDebuggerUrl).pathname);
+// Probe in a throwaway background tab: navigating an existing page target
+// would hijack whatever the user (or an automation client) has open there.
+const ver = await getJson("/json/version");
+const bws = await wsConnect(new URL(ver.webSocketDebuggerUrl).pathname);
+const created = await bws.send("Target.createTarget", { url: "about:blank", background: true });
+const targetId = created.result?.targetId;
+if (!targetId) { console.error("cannot create probe target:", JSON.stringify(created.error ?? created)); process.exit(1); }
+console.log(`target: probe tab ${targetId}`);
+const cdp = await wsConnect(`/devtools/page/${targetId}`);
 
 // 1) WebGL renderer in the live page
 const r1 = await cdp.send("Runtime.evaluate", {
@@ -98,9 +102,13 @@ await cdp.send("Page.navigate", { url: "chrome://gpu/" });
 await sleep(4000);
 const r2 = await cdp.send("Runtime.evaluate", {
   returnByValue: true,
+  // chrome://gpu renders into shadow roots, which body.innerText skips
   expression: `(() => {
-    const t = document.body.innerText;
-    return t.slice(0, 3500);
+    const kids = (r) => [...r.children].filter((c) => !/^(STYLE|SCRIPT)$/.test(c.tagName));
+    const walk = (n) => n.shadowRoot
+      ? kids(n.shadowRoot).map(walk).join('\\n')
+      : (kids(n).some((c) => c.shadowRoot) ? kids(n).map(walk).join('\\n') : (n.innerText || ''));
+    return walk(document.body).trim().slice(0, 3500);
   })()`,
 });
 console.log("--- chrome://gpu ---");
@@ -109,8 +117,6 @@ console.log(r2.result?.result?.value || "(empty)");
 // 3) authoritative source: browser-level SystemInfo.getInfo — the very data
 //    chrome://gpu renders (featureStatus map + detected problems)
 try {
-  const ver = await getJson("/json/version");
-  const bws = await wsConnect(new URL(ver.webSocketDebuggerUrl).pathname);
   const si = await bws.send("SystemInfo.getInfo");
   const g = si.result?.gpu ?? {};
   console.log("--- SystemInfo gpu ---");
@@ -122,9 +128,10 @@ try {
   } else {
     console.log("problems: none");
   }
-  bws.close();
 } catch (e) {
   console.log("SystemInfo unavailable:", e.message);
 }
 cdp.close();
+await bws.send("Target.closeTarget", { targetId });
+bws.close();
 process.exit(0);
