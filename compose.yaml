@@ -163,6 +163,12 @@ services:
       # --- Desktop ---
       # Xvfb screen geometry WxHxD; also sizes the Selkies stream
       SCREEN_GEOMETRY: "${SCREEN_GEOMETRY:-1920x1080x24}"
+      # RandR ceiling WxHxD the Xvfb screen is created at, so Selkies'
+      # dynamic resize (browser window size -> virtual display resolution)
+      # can grow past SCREEN_GEOMETRY; the working size is preset back in
+      # at startup. Empty = the fixed screen of SCREEN_GEOMETRY (no colon:
+      # an explicitly empty value stays empty and disables the headroom).
+      SCREEN_GEOMETRY_MAX: "${SCREEN_GEOMETRY_MAX-8192x4096x24}"
       # Run a compositing manager (picom) on the Xvfb display. Without one
       # chromium drops the alpha-blended shadows of its popup windows, so
       # the right-click context menu shows up as a seemingly borderless

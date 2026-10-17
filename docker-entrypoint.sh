@@ -52,7 +52,12 @@
 #   SELKIES_INTERNAL_PORT=8081  loopback port Selkies binds to (behind nginx)
 #   SELKIES_BASIC_AUTH_PASSWORD  set it to enable the login screen
 #   SELKIES_ENCODER=h264enc      h264enc | h264enc-striped | openh264enc | jpeg
-#   SCREEN_GEOMETRY=1920x1080x24 Xvfb screen size
+#   SCREEN_GEOMETRY=1920x1080x24 Xvfb screen size (the working size; also
+#                                sizes the Selkies stream)
+#   SCREEN_GEOMETRY_MAX=8192x4096x24 RandR ceiling the Xvfb screen is created
+#                                at so Selkies' browser-driven resize can grow
+#                                past SCREEN_GEOMETRY; empty = the fixed screen
+#                                of SCREEN_GEOMETRY and no resize headroom
 #   DISPLAY=:0                   Xvfb display. When it is already taken in the
 #                                network namespace (network_mode: host on a
 #                                desktop host running X/Xwayland), the next
@@ -124,6 +129,15 @@ fi
 # --- config ------------------------------------------------------------------
 DISPLAY="${DISPLAY:-:0}"
 SCREEN_GEOMETRY="${SCREEN_GEOMETRY:-1920x1080x24}"
+# RandR ceiling (WxHxD) the Xvfb screen is created at, giving Selkies'
+# browser-driven resize room to grow past SCREEN_GEOMETRY. Empty = the old
+# behavior: a fixed screen of SCREEN_GEOMETRY nothing can resize beyond.
+# The default matches the official selkies-session framebuffer (8192x4096).
+SCREEN_GEOMETRY_MAX="${SCREEN_GEOMETRY_MAX-8192x4096x24}"
+if [ -n "${SCREEN_GEOMETRY_MAX}" ] \
+    && ! printf '%s' "${SCREEN_GEOMETRY_MAX}" | grep -Eq '^[0-9]+x[0-9]+x[0-9]+$'; then
+    die "SCREEN_GEOMETRY_MAX must be WxHxD or empty, got '${SCREEN_GEOMETRY_MAX}'"
+fi
 
 # Selkies itself is loopback-only; nginx is the public front door.
 SELKIES_INTERNAL_PORT="${SELKIES_INTERNAL_PORT:-8081}"
@@ -335,12 +349,22 @@ if [ "${ENABLE_SELKIES}" = "true" ]; then
     fi
     DISPLAY=":${disp_num}"
 
-    log "starting Xvfb on display ${DISPLAY} (${SCREEN_GEOMETRY})"
+    # An X screen can never grow past the geometry it was created with, so a
+    # fixed -screen of SCREEN_GEOMETRY caps Selkies' browser-driven resize at
+    # the working size: a browser larger than the screen stays cropped
+    # ("screen cannot be larger than ..." in the selkies log). Create the
+    # screen at the SCREEN_GEOMETRY_MAX ceiling instead and preset the working
+    # size right after — the same shape the official selkies-session brings
+    # its display up in (XVFB_ARGS 8192x4096 + a RandR preset).
+    XVFB_SCREEN="${SCREEN_GEOMETRY}"
+    [ -n "${SCREEN_GEOMETRY_MAX}" ] && XVFB_SCREEN="${SCREEN_GEOMETRY_MAX}"
+
+    log "starting Xvfb on display ${DISPLAY} (screen ${XVFB_SCREEN}, working ${SCREEN_GEOMETRY})"
     # -nolisten local: no abstract socket, only /tmp/.X11-unix/X<n> inside
     # the container's filesystem. -ac turns X access control off, so an
     # abstract socket would let any process sharing the network namespace
     # (every host process, with network_mode: host) drive the browser.
-    "${DROP[@]}" Xvfb "${DISPLAY}" -screen 0 "${SCREEN_GEOMETRY}" +extension "COMPOSITE" \
+    "${DROP[@]}" Xvfb "${DISPLAY}" -screen 0 "${XVFB_SCREEN}" +extension "COMPOSITE" \
         +extension "DAMAGE" +extension "RANDR" +extension "RENDER" \
         +extension "XTEST" -nolisten tcp -nolisten local -ac -noreset \
         >/tmp/xvfb.log 2>&1 &
@@ -348,6 +372,18 @@ if [ "${ENABLE_SELKIES}" = "true" ]; then
     XSOCKET="/tmp/.X11-unix/X${DISPLAY#*:}"
     for _ in $(seq 1 50); do [ -S "${XSOCKET}" ] && break; sleep 0.2; done
     [ -S "${XSOCKET}" ] || die "Xvfb did not create ${XSOCKET}; see /tmp/xvfb.log"
+
+    if [ "${XVFB_SCREEN}" != "${SCREEN_GEOMETRY}" ]; then
+        # Preset the working size through the same RandR path a browser
+        # resize takes (mode creation + screen size; selkies-resize defaults
+        # to 60 Hz where nothing configured one). Cosmetic on failure: the
+        # display then stays at the ceiling until the first client resize.
+        INIT_W="${SCREEN_GEOMETRY%%x*}"
+        INIT_H="$(printf '%s' "${SCREEN_GEOMETRY}" | cut -dx -f2)"
+        if ! "${DROP[@]}" selkies-resize "${INIT_W}x${INIT_H}" >/tmp/display-preset.log 2>&1; then
+            log "WARN: presetting ${INIT_W}x${INIT_H} failed (see /tmp/display-preset.log); the display stays at ${XVFB_SCREEN} until a client resizes it"
+        fi
+    fi
 
     # Compositing manager for the fresh display. No WM runs here and Xvfb
     # has no compositor of its own, and without a compositing manager
