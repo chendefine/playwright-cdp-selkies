@@ -52,14 +52,14 @@ docker run ─┬─ Xvfb        虚拟显示(Selkies 采集的画面)
 
 ## 镜像里有什么
 
-| 组件 | 版本 | 作用 |
-| --- | --- | --- |
-| Ubuntu | 24.04 | 基础镜像 |
-| Node.js | 24(当前 LTS) | 与 Playwright 支持范围一致 |
-| Playwright Chromium | 1.62.1 | 被自动化的浏览器(`chromium`、`chromium-headless-shell`、`ffmpeg`) |
-| Selkies | [钉住的 commit](Dockerfile) | HTML5 远程桌面(Web 客户端、信令、串流) |
-| nginx | Ubuntu 软件包 | 统一门面:Web UI(HTTP/HTTPS)+ CDP 网关,支持 WebSocket |
-| Xvfb / PulseAudio | Ubuntu 软件包 | 虚拟显示器 + 音频,供串流 |
+| 组件                | 版本                        | 作用                                                              |
+| ------------------- | --------------------------- | ----------------------------------------------------------------- |
+| Ubuntu              | 24.04                       | 基础镜像                                                          |
+| Node.js             | 24(当前 LTS)                | 与 Playwright 支持范围一致                                        |
+| Playwright Chromium | 1.62.1                      | 被自动化的浏览器(`chromium`、`chromium-headless-shell`、`ffmpeg`) |
+| Selkies             | [钉住的 commit](Dockerfile) | HTML5 远程桌面(Web 客户端、信令、串流)                            |
+| nginx               | Ubuntu 软件包               | 统一门面:Web UI(HTTP/HTTPS)+ CDP 网关,支持 WebSocket              |
+| Xvfb / PulseAudio   | Ubuntu 软件包               | 虚拟显示器 + 音频,供串流                                          |
 
 容器内部所有服务只监听回环地址;nginx 是唯一的对外门面,且每个代理都支持 WebSocket(CDP 和 Selkies 信令都需要)。
 
@@ -108,15 +108,15 @@ docker run -d --name playwright-cdp-selkies \
 
 两组相互独立的变量,都在 `.env` 里设置:**容器侧**端口是 nginx 在容器内实际监听的端口;**宿主侧**端口是 docker 发布出去的端口(compose 会自动把它映射到容器侧端口)。
 
-| 服务 | 容器端口(默认) | 设置变量 | 宿主端口(默认) | 设置变量 |
-| --- | --- | --- | --- | --- |
-| Web UI(HTTP) | 80 | `WEB_HTTP_PORT` | 8080 | `NGINX_HTTP_PORT` |
-| Web UI(HTTPS,可选) | 443 | `WEB_HTTPS_PORT` | 8443 | `NGINX_HTTPS_PORT` + [HTTPS](#https-1) |
-| Chromium CDP | 9222 | `CDP_LISTEN_PORT` | 9222 | `CDP_PORT` |
+| 服务               | 容器端口(默认) | 设置变量                  | 宿主端口(默认) | 设置变量                               |
+| ------------------ | -------------- | ------------------------- | -------------- | -------------------------------------- |
+| Web UI(HTTP)       | 80             | `NGINX_LISTEN_HTTP_PORT`  | 8080           | `NGINX_HTTP_PORT`                      |
+| Web UI(HTTPS,可选) | 443            | `NGINX_LISTEN_HTTPS_PORT` | 8443           | `NGINX_HTTPS_PORT` + [HTTPS](#https-1) |
+| Chromium CDP       | 9222           | `CDP_LISTEN_PORT`         | 9222           | `CDP_PORT`                             |
 
 修改容器侧端口主要用于 `network_mode: host` / 共享网络命名空间,或 docker 网络里的对端需要特定端口的场景;普通端口发布用默认值即可。它们彼此之间、与 `PORT_FORWARDS` 监听端口、与仅回环的 `SELKIES_INTERNAL_PORT` / `CDP_INTERNAL_PORT` 都不得冲突 —— 冲突时入口脚本直接报错退出。用 `docker run` 时通过 `-e` 传入,并相应调整 `-p`(例如 `-e CDP_LISTEN_PORT=9333 -p 9222:9333`)。
 
-除这些端口外,`PORT_FORWARDS` 可以追加额外的监听端口,反向代理到 docker 网络里的兄弟容器 —— 见 [Docker 网络(compose)](#docker-网络compose)。
+除这些端口外,`PORT_FORWARDS` 可以追加额外的监听端口,反向代理到 docker 网络里的兄弟容器 —— 见 [Docker 网络(compose)](#docker-网络compose)。使用 host 网络时完全没有端口发布,容器侧端口直接绑定在宿主机上 —— 见 [Host 网络(compose)](#host-网络compose)。
 
 ## 通过 CDP 接入 Playwright
 
@@ -178,61 +178,63 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 
 **服务开关**
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
+| 变量             | 默认值 | 说明                                               |
+| ---------------- | ------ | -------------------------------------------------- |
 | `ENABLE_SELKIES` | `true` | `false` = 跳过 Web UI + 显示器 + 音频(纯 CDP 容器) |
-| `ENABLE_CDP` | `true` | `false` = 跳过 Chromium + CDP 网关(纯远程桌面容器) |
+| `ENABLE_CDP`     | `true` | `false` = 跳过 Chromium + CDP 网关(纯远程桌面容器) |
 
 **Web UI / TLS**
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `WEB_HTTP_PORT` | `80` | nginx 在容器内提供 HTTP Web UI 的端口(见[端口](#端口)) |
-| `WEB_HTTPS_PORT` | `443` | nginx 在容器内提供 TLS Web UI 的端口 |
-| `ENABLE_HTTPS` | `false` | `true` = nginx 在容器 `WEB_HTTPS_PORT` 端口同时提供 TLS 的 Web UI |
-| `TLS_CERT_DIR` | `/etc/nginx/tls` | 证书查找 / 生成目录 |
-| `TLS_CERT_FILE` / `TLS_KEY_FILE` | `$TLS_CERT_DIR/fullchain.pem` / `privkey.pem` | 显式证书/私钥路径 |
-| `TLS_SELF_SIGNED_CN` | `localhost` | 生成的自签证书 CN |
+| 变量                             | 默认值                                        | 说明                                                                                                                                                             |
+| -------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NGINX_LISTEN_HTTP_PORT`         | `80`                                          | nginx 在容器内提供 HTTP Web UI 的端口(见[端口](#端口))                                                                                                           |
+| `NGINX_LISTEN_HTTPS_PORT`        | `443`                                         | nginx 在容器内提供 TLS Web UI 的端口                                                                                                                             |
+| `NGINX_LISTEN_ADDR`              | *(空)*                                        | 所有 nginx 监听(Web UI、CDP、`PORT_FORWARDS`)绑定的地址;空 = 所有网卡。使用 [host 网络](#host-网络compose)时建议设为 `127.0.0.1`,让 CDP 与 Web UI 只在本机可访问 |
+| `ENABLE_HTTPS`                   | `false`                                       | `true` = nginx 在容器 `NGINX_LISTEN_HTTPS_PORT` 端口同时提供 TLS 的 Web UI                                                                                       |
+| `TLS_CERT_DIR`                   | `/etc/nginx/tls`                              | 证书查找 / 生成目录                                                                                                                                              |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | `$TLS_CERT_DIR/fullchain.pem` / `privkey.pem` | 显式证书/私钥路径                                                                                                                                                |
+| `TLS_SELF_SIGNED_CN`             | `localhost`                                   | 生成的自签证书 CN                                                                                                                                                |
 
 **额外端口转发**
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
+| 变量            | 默认值 | 说明                                                                                                                                                                                                    |
+| --------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PORT_FORWARDS` | *(空)* | 空格/逗号分隔的 `LISTEN=HOST:PORT` 列表:nginx 额外监听每个 `LISTEN` 端口,反向代理(支持 WebSocket)到 `HOST:PORT` —— 通常是同一 docker 网络里的兄弟容器。详见 [Docker 网络(compose)](#docker-网络compose) |
 
 **Selkies**
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `SELKIES_BASIC_AUTH_PASSWORD` | *(空)* | 设置即启用登录页;空 = 无登录 |
-| `SELKIES_BASIC_AUTH_USER` | `ubuntu` | 登录用户名 |
-| `SELKIES_ENCODER` | `h264enc` | `h264enc` \| `h264enc-striped` \| `openh264enc` \| `jpeg` |
-| `SELKIES_EXTRA_ARGS` | *(空)* | 追加到 `selkies` 的额外 CLI 参数 |
-| `SELKIES_INTERNAL_PORT` | `8081` | Selkies 绑定的回环端口(nginx 后面) |
+| 变量                          | 默认值    | 说明                                                      |
+| ----------------------------- | --------- | --------------------------------------------------------- |
+| `SELKIES_BASIC_AUTH_PASSWORD` | *(空)*    | 设置即启用登录页;空 = 无登录                              |
+| `SELKIES_BASIC_AUTH_USER`     | `ubuntu`  | 登录用户名                                                |
+| `SELKIES_ENCODER`             | `h264enc` | `h264enc` \| `h264enc-striped` \| `openh264enc` \| `jpeg` |
+| `SELKIES_EXTRA_ARGS`          | *(空)*    | 追加到 `selkies` 的额外 CLI 参数                          |
+| `SELKIES_INTERNAL_PORT`       | `8081`    | Selkies 绑定的回环端口(nginx 后面)                        |
 
 **Chromium / CDP**
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `CHROMIUM_HEADLESS` | `0` | `0` = 有头,显示在 Xvfb 桌面(串流可见);`1` = 无头 |
-| `CHROMIUM_LANG` | `en-US` | 浏览器 UI 语言 + `Accept-Language`(如 `zh-CN`) |
-| `CHROMIUM_START_URL` | `about:blank` | 启动时打开的页面 |
-| `CHROMIUM_EXTRA_ARGS` | *(空)* | 额外 chromium 参数,如 `--proxy-server=http://host:3128` |
-| `CHROMIUM_GPU` | `auto` | `auto` = 有直通 GPU(见 [GPU 直通](#gpu-直通可选))就用硬件渲染,否则 SwiftShader 软件渲染 —— WebGL 始终可用;`off` = 强制软件渲染;`strict` = 永不允许 SwiftShader(无 GPU 则无 WebGL) |
-| `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2`(compose 默认;不用 compose 时为空) | 逗号分隔的特性列表,以 `--disable-features=` 传给 chromium —— 关闭 HTTPS-First / HTTPS-Upgrade 实验;在 `.env` 里设为空可去掉该参数 |
-| `CHROMIUM_USER_DATA_DIR` | `/tmp/chrome-profile`(compose:`/chrome-user-data`) | 浏览器配置目录 |
-| `CDP_LISTEN_PORT` | `9222` | 公开 CDP 网关在容器内的端口(nginx → chromium;见[端口](#端口)) |
-| `CDP_INTERNAL_PORT` | `9221` | Chromium 回环 DevTools 端口(nginx 后面) |
+| 变量                        | 默认值                                                                                              | 说明                                                                                                                                                                              |
+| --------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CHROMIUM_HEADLESS`         | `0`                                                                                                 | `0` = 有头,显示在 Xvfb 桌面(串流可见);`1` = 无头                                                                                                                                  |
+| `CHROMIUM_LANG`             | `en-US`                                                                                             | 浏览器 UI 语言 + `Accept-Language`(如 `zh-CN`)                                                                                                                                    |
+| `CHROMIUM_START_URL`        | `about:blank`                                                                                       | 启动时打开的页面                                                                                                                                                                  |
+| `CHROMIUM_EXTRA_ARGS`       | *(空)*                                                                                              | 额外 chromium 参数,如 `--proxy-server=http://host:3128`                                                                                                                           |
+| `CHROMIUM_GPU`              | `auto`                                                                                              | `auto` = 有直通 GPU(见 [GPU 直通](#gpu-直通可选))就用硬件渲染,否则 SwiftShader 软件渲染 —— WebGL 始终可用;`off` = 强制软件渲染;`strict` = 永不允许 SwiftShader(无 GPU 则无 WebGL) |
+| `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2`(compose 默认;不用 compose 时为空) | 逗号分隔的特性列表,以 `--disable-features=` 传给 chromium —— 关闭 HTTPS-First / HTTPS-Upgrade 实验;在 `.env` 里设为空可去掉该参数                                                 |
+| `CHROMIUM_USER_DATA_DIR`    | `/tmp/chrome-profile`(compose:`/chrome-user-data`)                                                  | 浏览器配置目录                                                                                                                                                                    |
+| `CDP_LISTEN_PORT`           | `9222`                                                                                              | 公开 CDP 网关在容器内的端口(nginx → chromium;见[端口](#端口))                                                                                                                     |
+| `CDP_INTERNAL_PORT`         | `9221`                                                                                              | Chromium 回环 DevTools 端口(nginx 后面)                                                                                                                                           |
 
 **桌面 / 容器**
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `TZ` | `UTC` | 容器时区(任意 IANA 时区,如 `Asia/Shanghai`) |
-| `SCREEN_GEOMETRY` | `1920x1080x24` | Xvfb 屏幕尺寸 `宽x高x深`;同时决定 Selkies 串流分辨率 |
-| `ENABLE_COMPOSITOR` | `true` | 在 Xvfb 显示器上运行合成器(picom),让 Chromium 的弹出菜单(右键菜单)保留投影 —— 没有合成器时菜单会渲染成看似无边框的白色贴片;`false` = 恢复旧的扁平外观 |
-| `SHM_SIZE`(compose) | `1gb` | `/dev/shm` 大小 —— Chromium 需要比 docker 默认 64 MB 更多的空间 |
-| `RUN_USER` | *(空)* | 桌面栈(Xvfb、picom、PulseAudio、selkies、chromium)与 nginx *worker* 以该用户而非 root 运行 —— 已存在的用户名(如 `pwuser`)或 `uid[:gid]`;PID 1 与 nginx master 保持 root。见[权限降级(`RUN_USER`)](#权限降级run_user) |
+| 变量                | 默认值         | 说明                                                                                                                                                                                                                 |
+| ------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TZ`                | `UTC`          | 容器时区(任意 IANA 时区,如 `Asia/Shanghai`)                                                                                                                                                                          |
+| `SCREEN_GEOMETRY`   | `1920x1080x24` | Xvfb 屏幕尺寸 `宽x高x深`;同时决定 Selkies 串流分辨率                                                                                                                                                                 |
+| `DISPLAY`           | `:0`           | Xvfb 的 display;若该编号在当前网络命名空间里已被占用(在跑着 X/Xwayland 的机器上使用 host 网络),自动换用下一个空闲编号并记录日志                                                                                      |
+| `ENABLE_COMPOSITOR` | `true`         | 在 Xvfb 显示器上运行合成器(picom),让 Chromium 的弹出菜单(右键菜单)保留投影 —— 没有合成器时菜单会渲染成看似无边框的白色贴片;`false` = 恢复旧的扁平外观                                                                |
+| `SHM_SIZE`(compose) | `1gb`          | `/dev/shm` 大小 —— Chromium 需要比 docker 默认 64 MB 更多的空间                                                                                                                                                      |
+| `RUN_USER`          | *(空)*         | 桌面栈(Xvfb、picom、PulseAudio、selkies、chromium)与 nginx *worker* 以该用户而非 root 运行 —— 已存在的用户名(如 `pwuser`)或 `uid[:gid]`;PID 1 与 nginx master 保持 root。见[权限降级(`RUN_USER`)](#权限降级run_user) |
 
 ### 权限降级(`RUN_USER`)
 
@@ -303,10 +305,10 @@ entrypoint 启动时自动探测设备(`CHROMIUM_GPU=auto` 为默认)并把 Chro
 
 ## 持久化
 
-| 宿主路径(compose) | 容器路径 | 内容 |
-| --- | --- | --- |
+| 宿主路径(compose)    | 容器路径            | 内容                                                           |
+| -------------------- | ------------------- | -------------------------------------------------------------- |
 | `./chrome-user-data` | `/chrome-user-data` | Chromium 配置:cookies、登录态、扩展、`navigator.language` 偏好 |
-| `./tls` | `/etc/nginx/tls` | TLS 证书(你自己的,或生成的自签对) |
+| `./tls`              | `/etc/nginx/tls`    | TLS 证书(你自己的,或生成的自签对)                              |
 
 两个目录都已 git-ignore。配置目录就是浏览器的 `--user-data-dir`,本次运行登录的账号在 `docker compose down && up` 之后依然有效。上一容器遗留的 `Singleton*` 锁文件(Chromium 的运行时产物)会在启动时自动清理。
 
@@ -333,12 +335,30 @@ PORT_FORWARDS=3080=web:80
 #PORT_FORWARDS=3080=web:80 6080=onlyoffice-documentserver:80
 ```
 
-转发由同一个 nginx 前门提供(无额外进程):支持 WebSocket;经 docker 内嵌 DNS 按请求解析对端 —— 对端容器还没起来时本容器照常启动(对端上线前请求返回 502),对端重建换 IP 后也能自动跟上。转发监听端口不得与 `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` / `CDP_LISTEN_PORT`(默认 80/443/9222)或其他转发端口冲突。
+转发由同一个 nginx 前门提供(无额外进程):支持 WebSocket;经容器的 DNS 服务器(compose 网络下即 docker 内嵌 DNS)按请求解析对端 —— 对端容器还没起来时本容器照常启动(对端上线前请求返回 502),对端重建换 IP 后也能自动跟上。转发监听端口不得与 `NGINX_LISTEN_HTTP_PORT` / `NGINX_LISTEN_HTTPS_PORT` / `CDP_LISTEN_PORT`(默认 80/443/9222)或其他转发端口冲突。
+
+### Host 网络(compose)
+
+想让浏览器访问宿主机上运行的应用(例如 `http://localhost:3000` 的开发服务),可用 `compose.host.yaml` overlay 让容器直接使用宿主机网络栈(`network_mode: host`):
+
+```bash
+# .env —— 组合多个 overlay 时把 compose.host.yaml 放在最后,
+# 例如 compose.yaml:compose.gpu.yaml:compose.host.yaml
+COMPOSE_FILE=compose.yaml:compose.host.yaml
+NGINX_LISTEN_ADDR=127.0.0.1   # 建议:CDP 与 Web UI 不暴露到网络
+```
+
+该模式下的变化:
+
+* 不发布任何端口,nginx 直接在宿主机上绑定端口。`NGINX_LISTEN_HTTP_PORT` / `NGINX_LISTEN_HTTPS_PORT` / `CDP_LISTEN_PORT` 默认取 `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` / `CDP_PORT`(8080 / 8443 / 9222),访问地址与 bridge 模式保持一致;显式设置即可覆盖。HTTPS 只需 `ENABLE_HTTPS=true`(不需要 `compose.https.yaml`,它的端口映射会被丢弃)。
+* 仅回环的内部端口 —— `SELKIES_INTERNAL_PORT`(8081)与 `CDP_INTERNAL_PORT`(9221)—— 同样占用宿主机回环。若与你自己的应用冲突,在 `.env` 里换掉;端口绑定失败会导致容器退出。
+* `NETWORK_NAME` / `NETWORK_EXTERNAL` 与 `hostname` 不再生效。`PORT_FORWARDS` 仍可用,但通过宿主机的 DNS 解析(容器名无法解析)—— 通常直接让浏览器访问 `localhost:<端口>` 即可。
+* 若宿主机自己在 `:0` 上跑着 X server,入口脚本会自动换用下一个空闲 display。Xvfb 只监听文件系统 socket,宿主机进程无法接入容器里无认证的 display。
 
 ## 服务开关、健康检查与重启
 
 * 容器启动 == 服务启动:入口脚本是一个极简 PID 1 监管器,**任一服务退出即退出**,配合 `--restart always` / `restart: always` 即为自动恢复。
-* compose 健康检查每 30 秒轮询 `http://127.0.0.1:${WEB_HTTP_PORT}/`(nginx 代理 Selkies)。
+* compose 健康检查每 30 秒轮询 `http://127.0.0.1:${NGINX_LISTEN_HTTP_PORT}/`(nginx 代理 Selkies)。
 * 同时设置 `ENABLE_SELKIES=false` 和 `ENABLE_CDP=false` 是配置错误,会立即失败。
 * 日志在容器内 `/tmp/*.log`(`xvfb.log`、`pulseaudio.log`、`chromium.log`、`nginx/*.log`);`docker compose logs` 显示入口脚本自身输出。
 
@@ -395,7 +415,7 @@ node update-playwright-node.mjs --check    # CI 模式:有偏差则退出码 1
 
 ## 安全注意事项
 
-* **CDP 端点没有认证。** 一次 TCP 连接即获得完整的浏览器控制权 —— `9222` 只发布到 localhost 或可信网络,绝不要暴露公网 IP。
+* **CDP 端点没有认证。** 一次 TCP 连接即获得完整的浏览器控制权 —— `9222` 只发布到 localhost 或可信网络,绝不要暴露公网 IP。使用 [host 网络](#host-网络compose)时没有端口映射可以限制它,请设置 `NGINX_LISTEN_ADDR=127.0.0.1`。
 * **Web UI 默认无认证。** 只要串流可能被不信任的人访问,就设置 `SELKIES_BASIC_AUTH_PASSWORD`;同时配合 HTTPS(纯 HTTP + basic auth 会泄露密码)。
 * Chromium 以 `--no-sandbox` 运行(容器化 Chrome 在没有允许 userns 的 seccomp 配置时的标准做法);请把容器当作"暴露一个浏览器"来对待,放在专用的用户/VM 里。
 * 生成的 TLS 密钥是自签的 —— 浏览器会告警,属预期;对公网服务请换用正式证书。
@@ -403,15 +423,16 @@ node update-playwright-node.mjs --check    # CI 模式:有偏差则退出码 1
 
 ## 故障排查
 
-| 现象 | 处理 |
-| --- | --- |
-| `curl :9222/json/version` 失败 | `docker compose logs`;查看容器内 `/tmp/chromium.log`。端口被占?改 `CDP_PORT`。 |
-| Web UI 打不开 | 是否设了 `ENABLE_SELKIES=false`?查看 `/tmp/nginx/error.log` 及 Selkies 是否起来(`/tmp` 下日志)。 |
-| 串流里看不到浏览器窗口 | 是否设了 `CHROMIUM_HEADLESS=1`?默认 `0` 有头并显示在串流桌面。 |
-| 标签页高负载下崩溃 | 调大 `SHM_SIZE`(compose 已是 1 GB;`docker run` 用 `--shm-size`)。 |
-| 重启后提示 profile "in use by another process" | 正常情况会自动清理;仍出现就 `rm chrome-user-data/Singleton*`。 |
-| 旧配置目录语言未生效 | 入口脚本启动时会预置偏好;确认 `CHROMIUM_LANG` 设在*容器*上,而不是单个页面上。 |
-| HTTPS 报错 | 证书对损坏时会快速失败 —— 修复或删除 `tls/fullchain.pem` + `tls/privkey.pem`(删掉后重新生成自签对)。 |
+| 现象                                           | 处理                                                                                                                                                                                                                    |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 使用 host 网络时容器反复重启                   | 某个监听端口或内部端口已被宿主机占用 —— 查看 `docker compose logs` / `/tmp/nginx/error.log`、`/tmp/chromium.log`,然后更换 `NGINX_LISTEN_HTTP_PORT`、`CDP_LISTEN_PORT`、`SELKIES_INTERNAL_PORT` 或 `CDP_INTERNAL_PORT`。 |
+| `curl :9222/json/version` 失败                 | `docker compose logs`;查看容器内 `/tmp/chromium.log`。端口被占?改 `CDP_PORT`。                                                                                                                                          |
+| Web UI 打不开                                  | 是否设了 `ENABLE_SELKIES=false`?查看 `/tmp/nginx/error.log` 及 Selkies 是否起来(`/tmp` 下日志)。                                                                                                                        |
+| 串流里看不到浏览器窗口                         | 是否设了 `CHROMIUM_HEADLESS=1`?默认 `0` 有头并显示在串流桌面。                                                                                                                                                          |
+| 标签页高负载下崩溃                             | 调大 `SHM_SIZE`(compose 已是 1 GB;`docker run` 用 `--shm-size`)。                                                                                                                                                       |
+| 重启后提示 profile "in use by another process" | 正常情况会自动清理;仍出现就 `rm chrome-user-data/Singleton*`。                                                                                                                                                          |
+| 旧配置目录语言未生效                           | 入口脚本启动时会预置偏好;确认 `CHROMIUM_LANG` 设在*容器*上,而不是单个页面上。                                                                                                                                           |
+| HTTPS 报错                                     | 证书对损坏时会快速失败 —— 修复或删除 `tls/fullchain.pem` + `tls/privkey.pem`(删掉后重新生成自签对)。                                                                                                                    |
 
 ## 参与贡献
 

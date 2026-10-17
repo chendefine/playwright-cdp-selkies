@@ -19,7 +19,7 @@ image build + runtime smoke tests.
 | `Dockerfile` | Single-stage ubuntu:24.04 image: Node.js, pinned Playwright Chromium, nginx, Xvfb/PulseAudio/picom, sha256-pinned Selkies wheels. **Source of truth for pinned versions.** |
 | `docker-entrypoint.sh` | PID-1 supervisor: starts Xvfb → picom → PulseAudio → Selkies → Chromium → nginx, and **generates the nginx config into `/tmp/nginx/nginx.conf` at every container start** |
 | `compose.yaml` | Base stack; reads `.env` (`env_file` passes unlisted vars through, e.g. native `SELKIES_*`) |
-| `compose.https.yaml`, `compose.gpu.yaml`, `compose.gpu-nvidia.yaml` | Opt-in overlays (HTTPS publishing; Intel/AMD `/dev/dri`; NVIDIA CDI) |
+| `compose.https.yaml`, `compose.gpu.yaml`, `compose.gpu-nvidia.yaml`, `compose.host.yaml` | Opt-in overlays (HTTPS publishing; Intel/AMD `/dev/dri`; NVIDIA CDI; host networking — keep it last in `COMPOSE_FILE`) |
 | `.env.example` | Every runtime knob, documented |
 | `update-playwright-node.mjs` | Version-sync script — rewrites the Playwright/Node pins in `Dockerfile` + `compose.yaml` + `.env.example` + the README build-arg tables together |
 | `.github/workflows/ci.yaml` | lint → build → smoke tests → release-tag → publish (GHCR + Docker Hub) |
@@ -91,7 +91,7 @@ node update-playwright-node.mjs --check    # CI drift mode: exit 1 on drift
    `/tmp/nginx/nginx.conf`; `nginx -t` runs on the generated file before
    start.
 4. **Two separate port sets — keep them apart.** Container-side listen ports
-   are `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` / `CDP_LISTEN_PORT` (defaults
+   are `NGINX_LISTEN_HTTP_PORT` / `NGINX_LISTEN_HTTPS_PORT` / `CDP_LISTEN_PORT` (defaults
    80/443/9222); host-side published ports are `NGINX_HTTP_PORT` /
    `NGINX_HTTPS_PORT` / `CDP_PORT`. Compose `ports:` and the healthcheck
    must reference the container-side variables, never a literal port.
@@ -116,6 +116,11 @@ node update-playwright-node.mjs --check    # CI drift mode: exit 1 on drift
   `restart: always` recovers the container. New daemons must join the
   `pids` array and the cleanup trap; never background something the
   supervisor does not watch.
+* **Host networking must keep working.** With `compose.host.yaml` the
+  container shares the host's network namespace: every port (including the
+  loopback internals) is a host port, there is no docker DNS, and X abstract
+  sockets are shared — hence Xvfb's `-nolisten local` and the free-display
+  probe. Never hardcode a port, `127.0.0.11`, or `:0`.
 * **Loopback-only internals; nginx is the only public front door.** Selkies
   (`127.0.0.1:${SELKIES_INTERNAL_PORT}`) and Chromium DevTools
   (`127.0.0.1:${CDP_INTERNAL_PORT}`) bind loopback only. Every public

@@ -7,10 +7,10 @@
 # COMPOSE_FILE is read by docker compose from .env, so the whole switch lives
 # in .env. The overlay does two things:
 #   1. publishes ${NGINX_HTTPS_PORT:-8443} on the host -> container port
-#      ${WEB_HTTPS_PORT:-443} (the base compose.yaml deliberately does NOT
+#      ${NGINX_LISTEN_HTTPS_PORT:-443} (the base compose.yaml deliberately does NOT
 #      publish the HTTPS port, so a non-HTTPS setup does not occupy a host
 #      port),
-#   2. sets ENABLE_HTTPS=true, so nginx also listens on WEB_HTTPS_PORT.
+#   2. sets ENABLE_HTTPS=true, so nginx also listens on NGINX_LISTEN_HTTPS_PORT.
 # Either half can still be driven manually from .env (e.g. ENABLE_HTTPS=true
 # without this overlay = HTTPS only inside the docker network, nothing
 # published to the host).
@@ -20,6 +20,6 @@
 services:
   playwright-cdp-selkies:
     ports:
-      - "${NGINX_HTTPS_PORT:-8443}:${WEB_HTTPS_PORT:-443}" # web UI, HTTPS
+      - "${NGINX_HTTPS_PORT:-8443}:${NGINX_LISTEN_HTTPS_PORT:-443}" # web UI, HTTPS
     environment:
       ENABLE_HTTPS: "true"

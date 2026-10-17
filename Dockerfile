@@ -71,7 +71,7 @@ RUN install -d -m 777 "${PLAYWRIGHT_BROWSERS_PATH}" "${PLAYWRIGHT_BROWSERS_PATH}
 
 # === NGINX FRONT DOOR (CDP gateway + web reverse proxy) ===
 # nginx fronts every public port (replaces the previous socat forwarder) on
-# these container ports — defaults shown; WEB_HTTP_PORT / WEB_HTTPS_PORT /
+# these container ports — defaults shown; NGINX_LISTEN_HTTP_PORT / NGINX_LISTEN_HTTPS_PORT /
 # CDP_LISTEN_PORT change them at runtime (host-side publishing is docker's
 # -p / compose ports):
 #   * 0.0.0.0:80   -> Selkies web UI over HTTP (always on)
@@ -155,23 +155,23 @@ ARG PCMFLUX_SHA256_ARM64=694369625570b15fa061a717a2008885b87c5fde8cfcfac4f7f2971
 # TARGETARCH (amd64/arm64) is supplied automatically by the builder.
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in \
-        amd64) WHL_ARCH=x86_64;  PXL_SHA="${PIXELFLUX_SHA256_AMD64}"; PCM_SHA="${PCMFLUX_SHA256_AMD64}" ;; \
-        arm64) WHL_ARCH=aarch64; PXL_SHA="${PIXELFLUX_SHA256_ARM64}"; PCM_SHA="${PCMFLUX_SHA256_ARM64}" ;; \
-        *) printf 'unsupported TARGETARCH: %s\n' "${TARGETARCH:-<unset>}" >&2; exit 1 ;; \
+    amd64) WHL_ARCH=x86_64;  PXL_SHA="${PIXELFLUX_SHA256_AMD64}"; PCM_SHA="${PCMFLUX_SHA256_AMD64}" ;; \
+    arm64) WHL_ARCH=aarch64; PXL_SHA="${PIXELFLUX_SHA256_ARM64}"; PCM_SHA="${PCMFLUX_SHA256_ARM64}" ;; \
+    *) printf 'unsupported TARGETARCH: %s\n' "${TARGETARCH:-<unset>}" >&2; exit 1 ;; \
     esac && \
     curl -fsSL --retry 3 -o "/tmp/selkies-${SELKIES_VERSION}-py3-none-any.whl" \
-        "https://github.com/selkies-project/selkies/releases/download/${SELKIES_VERSION}/selkies-${SELKIES_VERSION}-py3-none-any.whl" && \
+    "https://github.com/selkies-project/selkies/releases/download/${SELKIES_VERSION}/selkies-${SELKIES_VERSION}-py3-none-any.whl" && \
     echo "${SELKIES_SHA256}  /tmp/selkies-${SELKIES_VERSION}-py3-none-any.whl" | sha256sum -c - && \
     curl -fsSL --retry 3 -o "/tmp/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" \
-        "https://github.com/selkies-project/pixelflux/releases/download/${PIXELFLUX_VERSION}/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" && \
+    "https://github.com/selkies-project/pixelflux/releases/download/${PIXELFLUX_VERSION}/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" && \
     echo "${PXL_SHA}  /tmp/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" | sha256sum -c - && \
     curl -fsSL --retry 3 -o "/tmp/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" \
-        "https://github.com/selkies-project/pcmflux/releases/download/${PCMFLUX_VERSION}/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" && \
+    "https://github.com/selkies-project/pcmflux/releases/download/${PCMFLUX_VERSION}/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" && \
     echo "${PCM_SHA}  /tmp/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" | sha256sum -c - && \
     PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --no-cache-dir \
-        "/tmp/selkies-${SELKIES_VERSION}-py3-none-any.whl" \
-        "/tmp/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" \
-        "/tmp/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" && \
+    "/tmp/selkies-${SELKIES_VERSION}-py3-none-any.whl" \
+    "/tmp/pixelflux-${PIXELFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" \
+    "/tmp/pcmflux-${PCMFLUX_VERSION}-${SELKIES_PYTAG}-${SELKIES_PYTAG}-manylinux_2_28_${WHL_ARCH}.whl" && \
     rm -f /tmp/selkies-*.whl /tmp/pixelflux-*.whl /tmp/pcmflux-*.whl && \
     rm -rf ~/.cache/pip && \
     # smoke-test the console commands, the exact version and the bundled web client
@@ -192,7 +192,7 @@ ENV PULSE_SERVER="unix:/tmp/pulse/native"
 ENV PIPEWIRE_LATENCY="256/48000"
 
 # Default ports served INSIDE the container (all by nginx; overridable at
-# runtime via WEB_HTTP_PORT / WEB_HTTPS_PORT / CDP_LISTEN_PORT — EXPOSE is
+# runtime via NGINX_LISTEN_HTTP_PORT / NGINX_LISTEN_HTTPS_PORT / CDP_LISTEN_PORT — EXPOSE is
 # documentation only): 80 = web UI over HTTP (always), 443 = web UI over HTTPS
 # (only when run with ENABLE_HTTPS=true — nginx does not listen on it
 # otherwise), 9222 = chromium CDP endpoint. Host-side ports are chosen by

@@ -52,14 +52,14 @@ docker run ─┬─ Xvfb        virtual display (what Selkies streams)
 
 ## What's inside
 
-| Component | Version | Role |
-| --- | --- | --- |
-| Ubuntu | 24.04 | base image |
-| Node.js | 24 (current LTS) | matches Playwright's supported range |
-| Playwright Chromium | 1.62.1 | the automated browser (`chromium`, `chromium-headless-shell`, `ffmpeg`) |
-| Selkies | [pinned commit](Dockerfile) | HTML5 remote desktop (web client, signaling, streaming) |
-| nginx | Ubuntu package | front door: web UI (HTTP/HTTPS) + CDP gateway, WebSocket-capable |
-| Xvfb / PulseAudio | Ubuntu packages | virtual display + audio for the stream |
+| Component           | Version                     | Role                                                                    |
+| ------------------- | --------------------------- | ----------------------------------------------------------------------- |
+| Ubuntu              | 24.04                       | base image                                                              |
+| Node.js             | 24 (current LTS)            | matches Playwright's supported range                                    |
+| Playwright Chromium | 1.62.1                      | the automated browser (`chromium`, `chromium-headless-shell`, `ffmpeg`) |
+| Selkies             | [pinned commit](Dockerfile) | HTML5 remote desktop (web client, signaling, streaming)                 |
+| nginx               | Ubuntu package              | front door: web UI (HTTP/HTTPS) + CDP gateway, WebSocket-capable        |
+| Xvfb / PulseAudio   | Ubuntu packages             | virtual display + audio for the stream                                  |
 
 All services are loopback-only inside the container; nginx is the single public front door and every proxy speaks WebSocket (required by both CDP and Selkies signaling).
 
@@ -108,15 +108,15 @@ Any argument other than the implicit `start` is exec'd instead of the supervisor
 
 Two independent sets of variables, both set in `.env`: the **container-side** port is what nginx actually listens on inside the container; the **host-side** port is what docker publishes (compose maps it onto the container-side port automatically).
 
-| Service | Container port (default) | Set with | Host port (default) | Set with |
-| --- | --- | --- | --- | --- |
-| Web UI (HTTP) | 80 | `WEB_HTTP_PORT` | 8080 | `NGINX_HTTP_PORT` |
-| Web UI (HTTPS, opt-in) | 443 | `WEB_HTTPS_PORT` | 8443 | `NGINX_HTTPS_PORT` + [HTTPS](#https) |
-| Chromium CDP | 9222 | `CDP_LISTEN_PORT` | 9222 | `CDP_PORT` |
+| Service                | Container port (default) | Set with                  | Host port (default) | Set with                             |
+| ---------------------- | ------------------------ | ------------------------- | ------------------- | ------------------------------------ |
+| Web UI (HTTP)          | 80                       | `NGINX_LISTEN_HTTP_PORT`  | 8080                | `NGINX_HTTP_PORT`                    |
+| Web UI (HTTPS, opt-in) | 443                      | `NGINX_LISTEN_HTTPS_PORT` | 8443                | `NGINX_HTTPS_PORT` + [HTTPS](#https) |
+| Chromium CDP           | 9222                     | `CDP_LISTEN_PORT`         | 9222                | `CDP_PORT`                           |
 
 Changing the container-side ports is mainly useful with `network_mode: host` / a shared network namespace, or when peers on the docker network expect specific ports; with plain port publishing the defaults are fine. They must not collide with each other, with `PORT_FORWARDS` listeners, or with the loopback-only `SELKIES_INTERNAL_PORT` / `CDP_INTERNAL_PORT` — the entrypoint fails fast on a clash. With `docker run`, pass them via `-e` and adjust `-p` to match (e.g. `-e CDP_LISTEN_PORT=9333 -p 9222:9333`).
 
-On top of these ports, `PORT_FORWARDS` adds extra listeners that are reverse-proxied to sibling containers on the docker network — see [Docker network (compose)](#docker-network-compose).
+On top of these ports, `PORT_FORWARDS` adds extra listeners that are reverse-proxied to sibling containers on the docker network — see [Docker network (compose)](#docker-network-compose). With host networking there is no publishing at all and the container-side ports are bound on the host directly — see [Host network (compose)](#host-network-compose).
 
 ## Connecting Playwright over CDP
 
@@ -178,61 +178,63 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 
 **Service toggles**
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `ENABLE_SELKIES` | `true` | `false` = skip web UI + display + audio (CDP-only container) |
-| `ENABLE_CDP` | `true` | `false` = skip Chromium + CDP gateway (remote-desktop-only container) |
+| Variable         | Default | Description                                                           |
+| ---------------- | ------- | --------------------------------------------------------------------- |
+| `ENABLE_SELKIES` | `true`  | `false` = skip web UI + display + audio (CDP-only container)          |
+| `ENABLE_CDP`     | `true`  | `false` = skip Chromium + CDP gateway (remote-desktop-only container) |
 
 **Web UI / TLS**
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `WEB_HTTP_PORT` | `80` | container port nginx serves the web UI on over HTTP (see [Ports](#ports)) |
-| `WEB_HTTPS_PORT` | `443` | container port nginx serves the web UI on over TLS |
-| `ENABLE_HTTPS` | `false` | `true` = nginx also serves the web UI over TLS on `WEB_HTTPS_PORT` |
-| `TLS_CERT_DIR` | `/etc/nginx/tls` | where certificates are looked up / generated |
-| `TLS_CERT_FILE` / `TLS_KEY_FILE` | `$TLS_CERT_DIR/fullchain.pem` / `privkey.pem` | explicit cert/key paths |
-| `TLS_SELF_SIGNED_CN` | `localhost` | CN of the generated self-signed certificate |
+| Variable                         | Default                                       | Description                                                                                                                                                                                       |
+| -------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NGINX_LISTEN_HTTP_PORT`         | `80`                                          | container port nginx serves the web UI on over HTTP (see [Ports](#ports))                                                                                                                         |
+| `NGINX_LISTEN_HTTPS_PORT`        | `443`                                         | container port nginx serves the web UI on over TLS                                                                                                                                                |
+| `NGINX_LISTEN_ADDR`              | *(empty)*                                     | address every nginx listener (web UI, CDP, `PORT_FORWARDS`) binds to; empty = all interfaces. Set `127.0.0.1` with [host networking](#host-network-compose) to keep CDP and the web UI host-local |
+| `ENABLE_HTTPS`                   | `false`                                       | `true` = nginx also serves the web UI over TLS on `NGINX_LISTEN_HTTPS_PORT`                                                                                                                       |
+| `TLS_CERT_DIR`                   | `/etc/nginx/tls`                              | where certificates are looked up / generated                                                                                                                                                      |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | `$TLS_CERT_DIR/fullchain.pem` / `privkey.pem` | explicit cert/key paths                                                                                                                                                                           |
+| `TLS_SELF_SIGNED_CN`             | `localhost`                                   | CN of the generated self-signed certificate                                                                                                                                                       |
 
 **Extra port forwards**
 
-| Variable | Default | Description |
-| --- | --- | --- |
+| Variable        | Default   | Description                                                                                                                                                                                                                                                              |
+| --------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `PORT_FORWARDS` | *(empty)* | space/comma-separated `LISTEN=HOST:PORT` entries: nginx also listens on each `LISTEN` port and reverse-proxies it (WebSocket-capable) to `HOST:PORT` — typically a sibling container on the same docker network. See [Docker network (compose)](#docker-network-compose) |
 
 **Selkies**
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `SELKIES_BASIC_AUTH_PASSWORD` | *(empty)* | set to enable the login screen; empty = no login |
-| `SELKIES_BASIC_AUTH_USER` | `ubuntu` | login username |
-| `SELKIES_ENCODER` | `h264enc` | `h264enc` \| `h264enc-striped` \| `openh264enc` \| `jpeg` |
-| `SELKIES_EXTRA_ARGS` | *(empty)* | extra CLI flags appended to `selkies` |
-| `SELKIES_INTERNAL_PORT` | `8081` | loopback port Selkies binds to (behind nginx) |
+| Variable                      | Default   | Description                                               |
+| ----------------------------- | --------- | --------------------------------------------------------- |
+| `SELKIES_BASIC_AUTH_PASSWORD` | *(empty)* | set to enable the login screen; empty = no login          |
+| `SELKIES_BASIC_AUTH_USER`     | `ubuntu`  | login username                                            |
+| `SELKIES_ENCODER`             | `h264enc` | `h264enc` \| `h264enc-striped` \| `openh264enc` \| `jpeg` |
+| `SELKIES_EXTRA_ARGS`          | *(empty)* | extra CLI flags appended to `selkies`                     |
+| `SELKIES_INTERNAL_PORT`       | `8081`    | loopback port Selkies binds to (behind nginx)             |
 
 **Chromium / CDP**
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `CHROMIUM_HEADLESS` | `0` | `0` = headed on the Xvfb desktop (visible in the stream); `1` = headless |
-| `CHROMIUM_LANG` | `en-US` | browser UI locale + `Accept-Language` (e.g. `zh-CN`) |
-| `CHROMIUM_START_URL` | `about:blank` | page opened at startup |
-| `CHROMIUM_EXTRA_ARGS` | *(empty)* | extra chromium flags, e.g. `--proxy-server=http://host:3128` |
-| `CHROMIUM_GPU` | `auto` | `auto` = render on a passed-through GPU when one is visible ([GPU passthrough](#gpu-passthrough-optional)), else SwiftShader software — WebGL always works; `off` = force software; `strict` = never allow SwiftShader (WebGL then requires the GPU) |
-| `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2` (compose; empty without compose) | comma-separated features passed as `--disable-features=` — turns off the HTTPS-First / HTTPS-Upgrade experiments; set empty in `.env` to drop the flag |
-| `CHROMIUM_USER_DATA_DIR` | `/tmp/chrome-profile` (compose: `/chrome-user-data`) | browser profile directory |
-| `CDP_LISTEN_PORT` | `9222` | container port of the public CDP gateway (nginx → chromium; see [Ports](#ports)) |
-| `CDP_INTERNAL_PORT` | `9221` | chromium loopback DevTools port (behind nginx) |
+| Variable                    | Default                                                                                            | Description                                                                                                                                                                                                                                          |
+| --------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CHROMIUM_HEADLESS`         | `0`                                                                                                | `0` = headed on the Xvfb desktop (visible in the stream); `1` = headless                                                                                                                                                                             |
+| `CHROMIUM_LANG`             | `en-US`                                                                                            | browser UI locale + `Accept-Language` (e.g. `zh-CN`)                                                                                                                                                                                                 |
+| `CHROMIUM_START_URL`        | `about:blank`                                                                                      | page opened at startup                                                                                                                                                                                                                               |
+| `CHROMIUM_EXTRA_ARGS`       | *(empty)*                                                                                          | extra chromium flags, e.g. `--proxy-server=http://host:3128`                                                                                                                                                                                         |
+| `CHROMIUM_GPU`              | `auto`                                                                                             | `auto` = render on a passed-through GPU when one is visible ([GPU passthrough](#gpu-passthrough-optional)), else SwiftShader software — WebGL always works; `off` = force software; `strict` = never allow SwiftShader (WebGL then requires the GPU) |
+| `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2` (compose; empty without compose) | comma-separated features passed as `--disable-features=` — turns off the HTTPS-First / HTTPS-Upgrade experiments; set empty in `.env` to drop the flag                                                                                               |
+| `CHROMIUM_USER_DATA_DIR`    | `/tmp/chrome-profile` (compose: `/chrome-user-data`)                                               | browser profile directory                                                                                                                                                                                                                            |
+| `CDP_LISTEN_PORT`           | `9222`                                                                                             | container port of the public CDP gateway (nginx → chromium; see [Ports](#ports))                                                                                                                                                                     |
+| `CDP_INTERNAL_PORT`         | `9221`                                                                                             | chromium loopback DevTools port (behind nginx)                                                                                                                                                                                                       |
 
 **Desktop / container**
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `TZ` | `UTC` | container timezone (any IANA zone, e.g. `Asia/Shanghai`) |
-| `SCREEN_GEOMETRY` | `1920x1080x24` | Xvfb screen size `WxHxD`; also sizes the Selkies stream |
-| `ENABLE_COMPOSITOR` | `true` | run picom on the Xvfb display so Chromium popup menus (right-click context menu) keep their drop shadows — without a compositor they render as seemingly borderless white sheets; `false` = old flat look |
-| `SHM_SIZE` (compose) | `1gb` | `/dev/shm` size — Chromium needs more than the 64 MB docker default |
-| `RUN_USER` | *(empty)* | run the desktop stack (Xvfb, picom, PulseAudio, selkies, chromium) and the nginx *workers* as this user instead of root — an existing username (e.g. `pwuser`) or `uid[:gid]`; PID 1 and the nginx master stay root. See [Privilege drop (`RUN_USER`)](#privilege-drop-run_user) |
+| Variable             | Default        | Description                                                                                                                                                                                                                                                                      |
+| -------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TZ`                 | `UTC`          | container timezone (any IANA zone, e.g. `Asia/Shanghai`)                                                                                                                                                                                                                         |
+| `SCREEN_GEOMETRY`    | `1920x1080x24` | Xvfb screen size `WxHxD`; also sizes the Selkies stream                                                                                                                                                                                                                          |
+| `DISPLAY`            | `:0`           | Xvfb display; if that display number is already taken in the network namespace (host networking on a machine running X/Xwayland), the next free one is used and logged                                                                                                           |
+| `ENABLE_COMPOSITOR`  | `true`         | run picom on the Xvfb display so Chromium popup menus (right-click context menu) keep their drop shadows — without a compositor they render as seemingly borderless white sheets; `false` = old flat look                                                                        |
+| `SHM_SIZE` (compose) | `1gb`          | `/dev/shm` size — Chromium needs more than the 64 MB docker default                                                                                                                                                                                                              |
+| `RUN_USER`           | *(empty)*      | run the desktop stack (Xvfb, picom, PulseAudio, selkies, chromium) and the nginx *workers* as this user instead of root — an existing username (e.g. `pwuser`) or `uid[:gid]`; PID 1 and the nginx master stay root. See [Privilege drop (`RUN_USER`)](#privilege-drop-run_user) |
 
 ### Privilege drop (`RUN_USER`)
 
@@ -304,10 +306,10 @@ The image bakes in the Mesa/VA-API userland for Intel/AMD; NVIDIA GL libraries c
 
 ## Persistence
 
-| Host path (compose) | Container path | Content |
-| --- | --- | --- |
+| Host path (compose)  | Container path      | Content                                                                   |
+| -------------------- | ------------------- | ------------------------------------------------------------------------- |
 | `./chrome-user-data` | `/chrome-user-data` | Chromium profile: cookies, logins, extensions, `navigator.language` prefs |
-| `./tls` | `/etc/nginx/tls` | TLS certificates (yours or the generated self-signed pair) |
+| `./tls`              | `/etc/nginx/tls`    | TLS certificates (yours or the generated self-signed pair)                |
 
 Both directories are git-ignored. The profile is the browser's `--user-data-dir`, so a login made in one run is still there after `docker compose down && up`. Stale `Singleton*` lock files (a Chromium artifact of the previous container) are cleaned automatically at startup.
 
@@ -334,12 +336,30 @@ PORT_FORWARDS=3080=web:80
 #PORT_FORWARDS=3080=web:80 6080=onlyoffice-documentserver:80
 ```
 
-The forwards are served by the same nginx front door (no extra process): WebSocket-capable, per-request DNS resolution via docker's embedded DNS — this container starts fine while a peer is still down (requests 502 until the peer answers) and follows a recreated peer's new IP. A forward listen port must not collide with `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` / `CDP_LISTEN_PORT` (80/443/9222 by default) or any other forward.
+The forwards are served by the same nginx front door (no extra process): WebSocket-capable, per-request DNS resolution via the container's DNS server (docker's embedded DNS on compose networks) — this container starts fine while a peer is still down (requests 502 until the peer answers) and follows a recreated peer's new IP. A forward listen port must not collide with `NGINX_LISTEN_HTTP_PORT` / `NGINX_LISTEN_HTTPS_PORT` / `CDP_LISTEN_PORT` (80/443/9222 by default) or any other forward.
+
+### Host network (compose)
+
+To let the browser reach apps running on the host itself — e.g. a dev server on `http://localhost:3000` — run the container on the host's network stack (`network_mode: host`) with the `compose.host.yaml` overlay:
+
+```bash
+# .env — keep compose.host.yaml LAST when combining overlays,
+# e.g. compose.yaml:compose.gpu.yaml:compose.host.yaml
+COMPOSE_FILE=compose.yaml:compose.host.yaml
+NGINX_LISTEN_ADDR=127.0.0.1   # recommended: keep CDP + web UI off the network
+```
+
+What changes in this mode:
+
+* Nothing is published; nginx binds its ports on the host directly. `NGINX_LISTEN_HTTP_PORT` / `NGINX_LISTEN_HTTPS_PORT` / `CDP_LISTEN_PORT` default to `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` / `CDP_PORT` (8080 / 8443 / 9222), so the URLs stay the same as in bridge mode; set them explicitly to override. HTTPS needs only `ENABLE_HTTPS=true` (`compose.https.yaml` is not needed; its port mapping is dropped).
+* The loopback-only internals — `SELKIES_INTERNAL_PORT` (8081) and `CDP_INTERNAL_PORT` (9221) — sit on the host's loopback as well. Move them in `.env` if your own apps use those ports; a bind failure stops the container.
+* `NETWORK_NAME` / `NETWORK_EXTERNAL` and `hostname` do not apply. `PORT_FORWARDS` still works but resolves names through the host's DNS (container names do not resolve) — usually you just point the browser at `localhost:<port>` directly.
+* If the host runs its own X server on `:0`, the entrypoint picks the next free display automatically. Xvfb listens on its filesystem socket only, so host processes cannot attach to the unauthenticated container display.
 
 ## Service toggles, health and restarts
 
 * Container start == service start: the entrypoint is a minimal PID-1 supervisor that **exits when any service dies**, so `--restart always` / `restart: always` turns that into automatic recovery.
-* The compose healthcheck polls `http://127.0.0.1:${WEB_HTTP_PORT}/` (nginx fronting Selkies) every 30 s.
+* The compose healthcheck polls `http://127.0.0.1:${NGINX_LISTEN_HTTP_PORT}/` (nginx fronting Selkies) every 30 s.
 * Both `ENABLE_SELKIES=false` and `ENABLE_CDP=false` at once is a configuration error and fails fast.
 * Logs live in `/tmp/*.log` inside the container (`xvfb.log`, `pulseaudio.log`, `chromium.log`, `nginx/*.log`) — `docker compose logs` shows the entrypoint's own output.
 
@@ -396,7 +416,7 @@ Without the secret everything still works, just human-gated: the PR opens, you v
 
 ## Security considerations
 
-* **The CDP endpoint has no authentication.** Full browser control is one TCP connect away — publish `9222` on localhost or a trusted network only, never on a public IP.
+* **The CDP endpoint has no authentication.** Full browser control is one TCP connect away — publish `9222` on localhost or a trusted network only, never on a public IP. With [host networking](#host-network-compose) there is no port mapping to restrict this; use `NGINX_LISTEN_ADDR=127.0.0.1`.
 * **The web UI is unauthenticated by default.** Set `SELKIES_BASIC_AUTH_PASSWORD` whenever the stream is reachable by anyone you don't trust; use HTTPS alongside it (plain HTTP + basic auth leaks the password).
 * Chromium runs with `--no-sandbox` (standard for containerized Chrome without a seccomp profile that allows userns); run the container as a dedicated user/VM you'd be comfortable exposing a browser to.
 * Generated TLS keys are self-signed — browsers will warn; that is expected. Bring a real certificate for anything public.
@@ -404,15 +424,16 @@ Without the secret everything still works, just human-gated: the PR opens, you v
 
 ## Troubleshooting
 
-| Symptom | Fix |
-| --- | --- |
-| `curl :9222/json/version` fails | `docker compose logs`; check `/tmp/chromium.log` inside the container. Port busy? change `CDP_PORT`. |
-| Web UI unreachable | `ENABLE_SELKIES=false` set? Check `/tmp/nginx/error.log` and that Selkies came up (`/tmp` logs). |
-| Browser window not in the stream | `CHROMIUM_HEADLESS=1` set? The default `0` runs headed on the streamed display. |
-| Tabs crash under load | raise `SHM_SIZE` (already 1 GB via compose; use `--shm-size` with `docker run`). |
-| Profile "in use by another process" after restart | normally auto-cleaned; `rm chrome-user-data/Singleton*` if it persists. |
-| Locale not applied to an old profile | the entrypoint seeds prefs at startup; ensure `CHROMIUM_LANG` is set for the *container*, not just for one page. |
-| HTTPS errors | a broken cert pair fails fast by design — fix or delete `tls/fullchain.pem` + `tls/privkey.pem` (a deleted pair is regenerated self-signed). |
+| Symptom                                           | Fix                                                                                                                                                                                                                                         |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `curl :9222/json/version` fails                   | `docker compose logs`; check `/tmp/chromium.log` inside the container. Port busy? change `CDP_PORT`.                                                                                                                                        |
+| Container restarts in a loop with host networking | a listen or internal port is already in use on the host — check `docker compose logs` / `/tmp/nginx/error.log`, `/tmp/chromium.log`, then move `NGINX_LISTEN_HTTP_PORT`, `CDP_LISTEN_PORT`, `SELKIES_INTERNAL_PORT` or `CDP_INTERNAL_PORT`. |
+| Web UI unreachable                                | `ENABLE_SELKIES=false` set? Check `/tmp/nginx/error.log` and that Selkies came up (`/tmp` logs).                                                                                                                                            |
+| Browser window not in the stream                  | `CHROMIUM_HEADLESS=1` set? The default `0` runs headed on the streamed display.                                                                                                                                                             |
+| Tabs crash under load                             | raise `SHM_SIZE` (already 1 GB via compose; use `--shm-size` with `docker run`).                                                                                                                                                            |
+| Profile "in use by another process" after restart | normally auto-cleaned; `rm chrome-user-data/Singleton*` if it persists.                                                                                                                                                                     |
+| Locale not applied to an old profile              | the entrypoint seeds prefs at startup; ensure `CHROMIUM_LANG` is set for the *container*, not just for one page.                                                                                                                            |
+| HTTPS errors                                      | a broken cert pair fails fast by design — fix or delete `tls/fullchain.pem` + `tls/privkey.pem` (a deleted pair is regenerated self-signed).                                                                                                |
 
 ## Contributing
 

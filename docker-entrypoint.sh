@@ -11,10 +11,10 @@
 #   5. nginx           the public front door, on these container ports
 #                     (defaults; each one an env knob, see below):
 #                       - 0.0.0.0:80    -> Selkies web UI over HTTP (always)
-#                         (WEB_HTTP_PORT)
+#                         (NGINX_LISTEN_HTTP_PORT)
 #                       - 0.0.0.0:443   -> Selkies web UI over TLS (only when
 #                         ENABLE_HTTPS=true; nginx does not even listen on it
-#                         otherwise) (WEB_HTTPS_PORT)
+#                         otherwise) (NGINX_LISTEN_HTTPS_PORT)
 #                       - 0.0.0.0:9222  -> chromium CDP gateway (CDP_LISTEN_PORT)
 #                     NGINX_HTTP_PORT / NGINX_HTTPS_PORT / CDP_PORT are a
 #                     different thing: they only pick the HOST-side ports
@@ -27,13 +27,17 @@
 # command instead, e.g. `docker run -it <image> bash` drops to a shell.
 #
 # Common overrides (-e):
-#   WEB_HTTP_PORT=80            container port nginx serves the web UI on (HTTP)
-#   WEB_HTTPS_PORT=443          container port nginx serves the web UI on (TLS)
+#   NGINX_LISTEN_HTTP_PORT=80            container port nginx serves the web UI on (HTTP)
+#   NGINX_LISTEN_HTTPS_PORT=443          container port nginx serves the web UI on (TLS)
 #   CDP_LISTEN_PORT=9222        container port of the public CDP gateway
 #                               (the three above are what nginx binds INSIDE the
 #                               container — useful with network_mode: host or
 #                               when sharing a network namespace)
-#   ENABLE_HTTPS=false          true = nginx also serves HTTPS on WEB_HTTPS_PORT. The
+#   NGINX_LISTEN_ADDR=""        address every nginx listener binds to; empty =
+#                               all interfaces. With network_mode: host set
+#                               127.0.0.1 to keep the unauthenticated CDP
+#                               endpoint (and the web UI) off the network.
+#   ENABLE_HTTPS=false          true = nginx also serves HTTPS on NGINX_LISTEN_HTTPS_PORT. The
 #                               certificate pair is REUSED whenever a valid one
 #                               already exists (mounted or generated on an
 #                               earlier start — self-signed counts as valid);
@@ -49,6 +53,10 @@
 #   SELKIES_BASIC_AUTH_PASSWORD  set it to enable the login screen
 #   SELKIES_ENCODER=h264enc      h264enc | h264enc-striped | openh264enc | jpeg
 #   SCREEN_GEOMETRY=1920x1080x24 Xvfb screen size
+#   DISPLAY=:0                   Xvfb display. When it is already taken in the
+#                                network namespace (network_mode: host on a
+#                                desktop host running X/Xwayland), the next
+#                                free display number is used instead.
 #   TZ=UTC                      container timezone (default UTC; -e TZ=...
 #                               overrides at runtime, no rebuild needed)
 #   CHROMIUM_LANG=en-US         browser UI locale + Accept-Language (default
@@ -124,10 +132,21 @@ SELKIES_ADDR="${SELKIES_ADDR:-127.0.0.1}"
 # nginx public listen ports INSIDE the container (host-side publishing of
 # these ports is a separate choice made by docker: compose "ports:" /
 # docker -p — NGINX_HTTP_PORT / NGINX_HTTPS_PORT / CDP_PORT in compose).
-WEB_HTTP_PORT="${WEB_HTTP_PORT:-80}"        # web UI over HTTP (always on)
-WEB_HTTPS_PORT="${WEB_HTTPS_PORT:-443}"     # web UI over HTTPS (ENABLE_HTTPS=true only)
+NGINX_LISTEN_HTTP_PORT="${NGINX_LISTEN_HTTP_PORT:-80}"        # web UI over HTTP (always on)
+NGINX_LISTEN_HTTPS_PORT="${NGINX_LISTEN_HTTPS_PORT:-443}"     # web UI over HTTPS (ENABLE_HTTPS=true only)
 CDP_LISTEN_PORT="${CDP_LISTEN_PORT:-9222}"  # chromium CDP gateway
-ENABLE_HTTPS="${ENABLE_HTTPS:-false}"   # true = also serve HTTPS on ${WEB_HTTPS_PORT}
+ENABLE_HTTPS="${ENABLE_HTTPS:-false}"   # true = also serve HTTPS on ${NGINX_LISTEN_HTTPS_PORT}
+# Address every nginx listener binds to (empty = all interfaces). Matters with
+# network_mode: host, where there is no docker port mapping to restrict
+# exposure: 127.0.0.1 keeps the unauthenticated CDP endpoint host-local.
+NGINX_LISTEN_ADDR="${NGINX_LISTEN_ADDR:-}"
+case "${NGINX_LISTEN_ADDR}" in
+    '') LISTEN_PREFIX="" ;;
+    *[!0-9A-Fa-f.:\[\]]*) die "NGINX_LISTEN_ADDR='${NGINX_LISTEN_ADDR}' must be an IPv4/IPv6 address" ;;
+    \[*) LISTEN_PREFIX="${NGINX_LISTEN_ADDR}:" ;;
+    *:*) LISTEN_PREFIX="[${NGINX_LISTEN_ADDR}]:" ;;   # bare IPv6 -> [addr]:port
+    *) LISTEN_PREFIX="${NGINX_LISTEN_ADDR}:" ;;
+esac
 
 # TLS: reuse any valid existing pair (mounted or generated on an earlier
 # start); generate a self-signed one only when no usable pair is found.
@@ -143,7 +162,7 @@ CDP_INTERNAL_PORT="${CDP_INTERNAL_PORT:-9221}" # chromium loopback DevTools port
 
 # Every port knob must be a plain TCP port number; a typo would otherwise
 # only surface as an obscure nginx/selkies/chromium startup failure.
-for port_var in WEB_HTTP_PORT WEB_HTTPS_PORT CDP_LISTEN_PORT \
+for port_var in NGINX_LISTEN_HTTP_PORT NGINX_LISTEN_HTTPS_PORT CDP_LISTEN_PORT \
                 SELKIES_INTERNAL_PORT CDP_INTERNAL_PORT; do
     port_val="${!port_var}"
     case "${port_val}" in
@@ -296,10 +315,34 @@ trap 'cleanup' EXIT
 
 # --- 1. virtual display + 2. audio (only needed by Selkies) ------------------
 if [ "${ENABLE_SELKIES}" = "true" ]; then
+    # X clients try the display's ABSTRACT socket (@/tmp/.X11-unix/X<n>)
+    # before the filesystem one, and abstract sockets live in the network
+    # namespace. With network_mode: host a host X server (Xorg/Xwayland) on
+    # the same display number would capture chromium/selkies and make Xvfb
+    # fail — so skip to the next display number nobody uses there.
+    disp_num="${DISPLAY#*:}"
+    disp_num="${disp_num%%.*}"
+    case "${disp_num}" in
+        ''|*[!0-9]*) die "DISPLAY='${DISPLAY}' must look like :<number>" ;;
+    esac
+    disp_wanted="${disp_num}"
+    while grep -q "[[:space:]]@/tmp/\.X11-unix/X${disp_num}\$" /proc/net/unix 2>/dev/null; do
+        disp_num=$((disp_num + 1))
+        [ "${disp_num}" -le $((disp_wanted + 100)) ] || die "no free X display found from :${disp_wanted} upwards"
+    done
+    if [ "${disp_num}" != "${disp_wanted}" ]; then
+        log "display :${disp_wanted} is already taken in this network namespace (host network?) -> using :${disp_num}"
+    fi
+    DISPLAY=":${disp_num}"
+
     log "starting Xvfb on display ${DISPLAY} (${SCREEN_GEOMETRY})"
+    # -nolisten local: no abstract socket, only /tmp/.X11-unix/X<n> inside
+    # the container's filesystem. -ac turns X access control off, so an
+    # abstract socket would let any process sharing the network namespace
+    # (every host process, with network_mode: host) drive the browser.
     "${DROP[@]}" Xvfb "${DISPLAY}" -screen 0 "${SCREEN_GEOMETRY}" +extension "COMPOSITE" \
         +extension "DAMAGE" +extension "RANDR" +extension "RENDER" \
-        +extension "XTEST" -nolisten tcp -ac -noreset \
+        +extension "XTEST" -nolisten tcp -nolisten local -ac -noreset \
         >/tmp/xvfb.log 2>&1 &
     pids+=($!)
     XSOCKET="/tmp/.X11-unix/X${DISPLAY#*:}"
@@ -559,10 +602,10 @@ fi
 
 # --- 6. nginx front door: web HTTP/HTTPS + CDP gateway ------------------------
 # One nginx instance serves every public port (replacing the old socat CDP
-# forwarder), on these container ports (WEB_HTTP_PORT / WEB_HTTPS_PORT /
+# forwarder), on these container ports (NGINX_LISTEN_HTTP_PORT / NGINX_LISTEN_HTTPS_PORT /
 # CDP_LISTEN_PORT):
-#   ${WEB_HTTP_PORT}  -> 127.0.0.1:${SELKIES_INTERNAL_PORT}  web UI, HTTP (always)
-#   ${WEB_HTTPS_PORT} -> 127.0.0.1:${SELKIES_INTERNAL_PORT}  web UI, TLS (optional)
+#   ${NGINX_LISTEN_HTTP_PORT}  -> 127.0.0.1:${SELKIES_INTERNAL_PORT}  web UI, HTTP (always)
+#   ${NGINX_LISTEN_HTTPS_PORT} -> 127.0.0.1:${SELKIES_INTERNAL_PORT}  web UI, TLS (optional)
 #   ${CDP_LISTEN_PORT} -> 127.0.0.1:${CDP_INTERNAL_PORT}     chromium CDP
 # plus one listener per PORT_FORWARDS entry (same-network peers, see the
 # PORT_FORWARDS block above). Every proxy is WebSocket-capable (CDP and
@@ -571,10 +614,10 @@ fi
 listen_ports=()
 upstream_ports=()
 if [ "${ENABLE_SELKIES}" = "true" ]; then
-    listen_ports+=("${WEB_HTTP_PORT}")
+    listen_ports+=("${NGINX_LISTEN_HTTP_PORT}")
     upstream_ports+=("${SELKIES_INTERNAL_PORT}")
     if [ "${ENABLE_HTTPS}" = "true" ]; then
-        listen_ports+=("${WEB_HTTPS_PORT}")
+        listen_ports+=("${NGINX_LISTEN_HTTPS_PORT}")
     fi
 elif [ "${ENABLE_HTTPS}" = "true" ]; then
     log "NOTE: ENABLE_HTTPS=true ignored: the web UI is disabled (ENABLE_SELKIES=false)"
@@ -601,6 +644,15 @@ fi
 #   * HTTP reverse proxy, not a raw TCP pipe; an https:// upstream would need
 #     proxy_ssl on (not exposed as a knob — none of our peers speak TLS).
 FORWARD_SERVERS=""
+# nginx's resolver needs an explicit DNS server: take the container's own
+# (/etc/resolv.conf) — docker's embedded 127.0.0.11 on user-defined networks,
+# the host's resolver with network_mode: host or the default bridge.
+FORWARD_RESOLVER="$(awk '$1 == "nameserver" { print $2; exit }' /etc/resolv.conf 2>/dev/null)"
+case "${FORWARD_RESOLVER}" in
+    '') FORWARD_RESOLVER="127.0.0.11" ;;
+    *%*) die "PORT_FORWARDS: nameserver '${FORWARD_RESOLVER}' in /etc/resolv.conf has a zone id nginx cannot use" ;;
+    *:*) FORWARD_RESOLVER="[${FORWARD_RESOLVER}]" ;;
+esac
 forward_listen_ports=()
 forward_targets=()
 if [ -n "${PORT_FORWARDS}" ]; then
@@ -625,11 +677,12 @@ if [ -n "${PORT_FORWARDS}" ]; then
 $(cat <<EOF
     # extra port forward ${fwd_listen} -> ${fwd_target} (PORT_FORWARDS)
     server {
-        listen ${fwd_listen};
+        listen ${LISTEN_PREFIX}${fwd_listen};
         server_name _;
-        # docker's embedded DNS; per-request resolution keeps this listener
-        # (and the whole nginx) up while the peer container is down
-        resolver 127.0.0.11 valid=10s ipv6=off;
+        # container DNS (docker's embedded 127.0.0.11 on compose networks);
+        # per-request resolution keeps this listener (and the whole nginx)
+        # up while the peer container is down
+        resolver ${FORWARD_RESOLVER} valid=10s ipv6=off;
         location / {
             # variable target => resolved at request time via the resolver
             # above, NOT at config-parse time (nginx -t never needs the peer)
@@ -766,7 +819,7 @@ if [ "${ENABLE_SELKIES}" = "true" ]; then
     WEB_SERVERS="$(cat <<EOF
     # web UI over plain HTTP (always on)
     server {
-        listen ${WEB_HTTP_PORT};
+        listen ${LISTEN_PREFIX}${NGINX_LISTEN_HTTP_PORT};
         server_name _;
         location / {
             proxy_pass http://127.0.0.1:${SELKIES_INTERNAL_PORT};
@@ -779,7 +832,7 @@ EOF
 $(cat <<EOF
     # web UI over HTTPS (ENABLE_HTTPS=true)
     server {
-        listen ${WEB_HTTPS_PORT} ssl;
+        listen ${LISTEN_PREFIX}${NGINX_LISTEN_HTTPS_PORT} ssl;
         server_name _;
         ssl_certificate ${TLS_CERT};
         ssl_certificate_key ${TLS_KEY};
@@ -800,7 +853,7 @@ if [ "${ENABLE_CDP}" = "true" ]; then
     CDP_SERVER="$(cat <<EOF
     # chromium CDP gateway (DevTools protocol over HTTP + WebSocket)
     server {
-        listen ${CDP_LISTEN_PORT};
+        listen ${LISTEN_PREFIX}${CDP_LISTEN_PORT};
         server_name _;
         location / {
             # Chromium's DevTools endpoint rejects Host headers that are not
@@ -889,8 +942,8 @@ if ! nginx_out="$(nginx -t -c "${NGINX_CONF}" 2>&1)"; then
 fi
 
 fronts=""
-[ "${ENABLE_SELKIES}" = "true" ] && fronts="http:${WEB_HTTP_PORT}"
-[ -n "${TLS_CERT}" ] && fronts="${fronts} https:${WEB_HTTPS_PORT}"
+[ "${ENABLE_SELKIES}" = "true" ] && fronts="http:${NGINX_LISTEN_HTTP_PORT}"
+[ -n "${TLS_CERT}" ] && fronts="${fronts} https:${NGINX_LISTEN_HTTPS_PORT}"
 [ "${ENABLE_CDP}" = "true" ] && fronts="${fronts} cdp:${CDP_LISTEN_PORT}"
 for i in "${!forward_listen_ports[@]}"; do
     fronts="${fronts} fwd:${forward_listen_ports[$i]}->${forward_targets[$i]}"
