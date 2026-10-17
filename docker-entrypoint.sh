@@ -8,15 +8,17 @@
 #   2. PulseAudio      audio server (Selkies captures it via pcmflux)
 #   3. Selkies         HTML5 remote desktop on 127.0.0.1:${SELKIES_INTERNAL_PORT:-8081}
 #   4. Chromium        playwright-built browser with a CDP endpoint on loopback
-#   5. nginx           the public front door, on FIXED container ports:
+#   5. nginx           the public front door, on these container ports
+#                     (defaults; each one an env knob, see below):
 #                       - 0.0.0.0:80    -> Selkies web UI over HTTP (always)
+#                         (WEB_HTTP_PORT)
 #                       - 0.0.0.0:443   -> Selkies web UI over TLS (only when
-#                         ENABLE_HTTPS=true; nginx does not even listen on 443
-#                         otherwise)
-#                       - 0.0.0.0:9222  -> chromium CDP gateway
-#                     These ports are not configurable: NGINX_HTTP_PORT /
-#                     NGINX_HTTPS_PORT / CDP_PORT only pick the HOST-side
-#                     ports docker publishes (compose "ports:" / docker -p).
+#                         ENABLE_HTTPS=true; nginx does not even listen on it
+#                         otherwise) (WEB_HTTPS_PORT)
+#                       - 0.0.0.0:9222  -> chromium CDP gateway (CDP_LISTEN_PORT)
+#                     NGINX_HTTP_PORT / NGINX_HTTPS_PORT / CDP_PORT are a
+#                     different thing: they only pick the HOST-side ports
+#                     docker publishes (compose "ports:" / docker -p).
 #
 # Container start == service start ("开机自启"): this script is the image
 # ENTRYPOINT; combine with `docker run --restart=always` for boot persistence.
@@ -25,7 +27,13 @@
 # command instead, e.g. `docker run -it <image> bash` drops to a shell.
 #
 # Common overrides (-e):
-#   ENABLE_HTTPS=false          true = nginx also serves HTTPS on 443. The
+#   WEB_HTTP_PORT=80            container port nginx serves the web UI on (HTTP)
+#   WEB_HTTPS_PORT=443          container port nginx serves the web UI on (TLS)
+#   CDP_LISTEN_PORT=9222        container port of the public CDP gateway
+#                               (the three above are what nginx binds INSIDE the
+#                               container — useful with network_mode: host or
+#                               when sharing a network namespace)
+#   ENABLE_HTTPS=false          true = nginx also serves HTTPS on WEB_HTTPS_PORT. The
 #                               certificate pair is REUSED whenever a valid one
 #                               already exists (mounted or generated on an
 #                               earlier start — self-signed counts as valid);
@@ -91,7 +99,7 @@
 #                                entries are synthesized at startup) runs those
 #                                daemons as that user instead. PID 1 and the
 #                                nginx master always stay root: nginx binds the
-#                                fixed container ports 80/443 and reads the
+#                                (possibly privileged) listen ports and reads the
 #                                TLS key, and the supervisor keeps preparing
 #                                the browser profile (chowned to the user on
 #                                every start).
@@ -113,11 +121,12 @@ SCREEN_GEOMETRY="${SCREEN_GEOMETRY:-1920x1080x24}"
 SELKIES_INTERNAL_PORT="${SELKIES_INTERNAL_PORT:-8081}"
 SELKIES_ADDR="${SELKIES_ADDR:-127.0.0.1}"
 
-# nginx public ports — FIXED by design (host-side publishing of these ports is
-# chosen by docker: compose "ports:" / docker -p, NOT by this container).
-WEB_HTTP_PORT=80      # web UI over HTTP (always on)
-WEB_HTTPS_PORT=443    # web UI over HTTPS (ENABLE_HTTPS=true only)
-CDP_LISTEN_PORT=9222  # chromium CDP gateway
+# nginx public listen ports INSIDE the container (host-side publishing of
+# these ports is a separate choice made by docker: compose "ports:" /
+# docker -p — NGINX_HTTP_PORT / NGINX_HTTPS_PORT / CDP_PORT in compose).
+WEB_HTTP_PORT="${WEB_HTTP_PORT:-80}"        # web UI over HTTP (always on)
+WEB_HTTPS_PORT="${WEB_HTTPS_PORT:-443}"     # web UI over HTTPS (ENABLE_HTTPS=true only)
+CDP_LISTEN_PORT="${CDP_LISTEN_PORT:-9222}"  # chromium CDP gateway
 ENABLE_HTTPS="${ENABLE_HTTPS:-false}"   # true = also serve HTTPS on ${WEB_HTTPS_PORT}
 
 # TLS: reuse any valid existing pair (mounted or generated on an earlier
@@ -131,6 +140,18 @@ TLS_SELF_SIGNED_CN="${TLS_SELF_SIGNED_CN:-localhost}"
 TLS_FALLBACK_DIR="/etc/nginx/tls-selfsigned"
 
 CDP_INTERNAL_PORT="${CDP_INTERNAL_PORT:-9221}" # chromium loopback DevTools port
+
+# Every port knob must be a plain TCP port number; a typo would otherwise
+# only surface as an obscure nginx/selkies/chromium startup failure.
+for port_var in WEB_HTTP_PORT WEB_HTTPS_PORT CDP_LISTEN_PORT \
+                SELKIES_INTERNAL_PORT CDP_INTERNAL_PORT; do
+    port_val="${!port_var}"
+    case "${port_val}" in
+        ''|*[!0-9]*) die "${port_var}='${port_val}' is not a port number" ;;
+    esac
+    { [ "${port_val}" -ge 1 ] && [ "${port_val}" -le 65535 ]; } \
+        || die "${port_var}=${port_val} is outside 1-65535"
+done
 
 # Extra reverse proxies served by the same nginx front door (empty = none).
 # Parsed and validated in the nginx section below.
@@ -170,9 +191,9 @@ export PULSE_RUNTIME_PATH PULSE_SERVER
 # --- privilege drop (RUN_USER) ------------------------------------------------
 # RUN_USER runs the desktop stack — Xvfb, picom, PulseAudio, Selkies,
 # Chromium — and the nginx workers as an unprivileged user. PID 1 and the
-# nginx MASTER stay root: nginx binds the fixed container ports 80/443 and
-# reads the TLS key, and the supervisor must keep chown-ing the browser
-# profile. Empty (default) = everything runs as root, exactly the historical
+# nginx MASTER stay root: nginx binds the (by default privileged) listen
+# ports and reads the TLS key, and the supervisor must keep chown-ing the
+# browser profile. Empty (default) = everything runs as root, exactly the historical
 # behavior: DROP stays an empty array and every "${DROP[@]}" prefix below is
 # a no-op.
 RUN_USER="${RUN_USER:-}"
@@ -538,7 +559,8 @@ fi
 
 # --- 6. nginx front door: web HTTP/HTTPS + CDP gateway ------------------------
 # One nginx instance serves every public port (replacing the old socat CDP
-# forwarder), on FIXED container ports:
+# forwarder), on these container ports (WEB_HTTP_PORT / WEB_HTTPS_PORT /
+# CDP_LISTEN_PORT):
 #   ${WEB_HTTP_PORT}  -> 127.0.0.1:${SELKIES_INTERNAL_PORT}  web UI, HTTP (always)
 #   ${WEB_HTTPS_PORT} -> 127.0.0.1:${SELKIES_INTERNAL_PORT}  web UI, TLS (optional)
 #   ${CDP_LISTEN_PORT} -> 127.0.0.1:${CDP_INTERNAL_PORT}     chromium CDP

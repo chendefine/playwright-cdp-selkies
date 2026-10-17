@@ -106,15 +106,17 @@ Any argument other than the implicit `start` is exec'd instead of the supervisor
 
 ## Ports
 
-Container ports are **fixed by design**; the variables pick only the **host-side** ports docker publishes.
+Two independent sets of variables, both set in `.env`: the **container-side** port is what nginx actually listens on inside the container; the **host-side** port is what docker publishes (compose maps it onto the container-side port automatically).
 
-| Container port | Service | Host port (default) | How to change |
-| --- | --- | --- | --- |
-| 80 | Web UI (HTTP) | 8080 | `NGINX_HTTP_PORT` in `.env` |
-| 443 | Web UI (HTTPS, opt-in) | 8443 | `NGINX_HTTPS_PORT` + [HTTPS](#https) |
-| 9222 | Chromium CDP | 9222 | `CDP_PORT` in `.env` |
+| Service | Container port (default) | Set with | Host port (default) | Set with |
+| --- | --- | --- | --- | --- |
+| Web UI (HTTP) | 80 | `WEB_HTTP_PORT` | 8080 | `NGINX_HTTP_PORT` |
+| Web UI (HTTPS, opt-in) | 443 | `WEB_HTTPS_PORT` | 8443 | `NGINX_HTTPS_PORT` + [HTTPS](#https) |
+| Chromium CDP | 9222 | `CDP_LISTEN_PORT` | 9222 | `CDP_PORT` |
 
-On top of these fixed ports, `PORT_FORWARDS` adds extra listeners that are reverse-proxied to sibling containers on the docker network — see [Docker network (compose)](#docker-network-compose).
+Changing the container-side ports is mainly useful with `network_mode: host` / a shared network namespace, or when peers on the docker network expect specific ports; with plain port publishing the defaults are fine. They must not collide with each other, with `PORT_FORWARDS` listeners, or with the loopback-only `SELKIES_INTERNAL_PORT` / `CDP_INTERNAL_PORT` — the entrypoint fails fast on a clash. With `docker run`, pass them via `-e` and adjust `-p` to match (e.g. `-e CDP_LISTEN_PORT=9333 -p 9222:9333`).
+
+On top of these ports, `PORT_FORWARDS` adds extra listeners that are reverse-proxied to sibling containers on the docker network — see [Docker network (compose)](#docker-network-compose).
 
 ## Connecting Playwright over CDP
 
@@ -185,7 +187,9 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `ENABLE_HTTPS` | `false` | `true` = nginx also serves the web UI over TLS on container port 443 |
+| `WEB_HTTP_PORT` | `80` | container port nginx serves the web UI on over HTTP (see [Ports](#ports)) |
+| `WEB_HTTPS_PORT` | `443` | container port nginx serves the web UI on over TLS |
+| `ENABLE_HTTPS` | `false` | `true` = nginx also serves the web UI over TLS on `WEB_HTTPS_PORT` |
 | `TLS_CERT_DIR` | `/etc/nginx/tls` | where certificates are looked up / generated |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | `$TLS_CERT_DIR/fullchain.pem` / `privkey.pem` | explicit cert/key paths |
 | `TLS_SELF_SIGNED_CN` | `localhost` | CN of the generated self-signed certificate |
@@ -217,6 +221,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `CHROMIUM_GPU` | `auto` | `auto` = render on a passed-through GPU when one is visible ([GPU passthrough](#gpu-passthrough-optional)), else SwiftShader software — WebGL always works; `off` = force software; `strict` = never allow SwiftShader (WebGL then requires the GPU) |
 | `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2` (compose; empty without compose) | comma-separated features passed as `--disable-features=` — turns off the HTTPS-First / HTTPS-Upgrade experiments; set empty in `.env` to drop the flag |
 | `CHROMIUM_USER_DATA_DIR` | `/tmp/chrome-profile` (compose: `/chrome-user-data`) | browser profile directory |
+| `CDP_LISTEN_PORT` | `9222` | container port of the public CDP gateway (nginx → chromium; see [Ports](#ports)) |
 | `CDP_INTERNAL_PORT` | `9221` | chromium loopback DevTools port (behind nginx) |
 
 **Desktop / container**
@@ -245,7 +250,7 @@ RUN_USER=pwuser        # or a numeric uid[:gid], e.g. 1000 to match the
 What it does:
 
 * Accepts an existing username (`pwuser` ships in the image) or `uid[:gid]`; missing passwd/group entries for a numeric id are synthesized at startup.
-* PID 1 and the nginx **master** stay root: nginx binds the fixed container ports 80/443 and reads the TLS key, and the supervisor prepares the browser profile. Everything else is started via `setpriv`, with no capabilities.
+* PID 1 and the nginx **master** stay root: nginx binds the (by default privileged) listen ports and reads the TLS key, and the supervisor prepares the browser profile. Everything else is started via `setpriv`, with no capabilities.
 * The browser profile (`CHROMIUM_USER_DATA_DIR`) is `chown`ed to the user on every start — the first migration of a large root-owned profile can take a moment; afterwards it is a no-op walk.
 * GPU device nodes stay usable: the host gid of each `/dev/dri` / NVIDIA node is added to the supplementary group set.
 * What it deliberately does *not* change: Chromium keeps `--no-sandbox` (Docker's default seccomp profile blocks the userns sandbox for any uid) and the CDP/web ports stay as they are. The gain is filesystem/privilege isolation — a compromised browser can no longer write as root.
@@ -329,12 +334,12 @@ PORT_FORWARDS=3080=web:80
 #PORT_FORWARDS=3080=web:80 6080=onlyoffice-documentserver:80
 ```
 
-The forwards are served by the same nginx front door (no extra process): WebSocket-capable, per-request DNS resolution via docker's embedded DNS — this container starts fine while a peer is still down (requests 502 until the peer answers) and follows a recreated peer's new IP. A forward listen port must not collide with 80/443/9222 or any other forward.
+The forwards are served by the same nginx front door (no extra process): WebSocket-capable, per-request DNS resolution via docker's embedded DNS — this container starts fine while a peer is still down (requests 502 until the peer answers) and follows a recreated peer's new IP. A forward listen port must not collide with `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` / `CDP_LISTEN_PORT` (80/443/9222 by default) or any other forward.
 
 ## Service toggles, health and restarts
 
 * Container start == service start: the entrypoint is a minimal PID-1 supervisor that **exits when any service dies**, so `--restart always` / `restart: always` turns that into automatic recovery.
-* The compose healthcheck polls `http://127.0.0.1:80/` (nginx fronting Selkies) every 30 s.
+* The compose healthcheck polls `http://127.0.0.1:${WEB_HTTP_PORT}/` (nginx fronting Selkies) every 30 s.
 * Both `ENABLE_SELKIES=false` and `ENABLE_CDP=false` at once is a configuration error and fails fast.
 * Logs live in `/tmp/*.log` inside the container (`xvfb.log`, `pulseaudio.log`, `chromium.log`, `nginx/*.log`) — `docker compose logs` shows the entrypoint's own output.
 
@@ -395,7 +400,7 @@ Without the secret everything still works, just human-gated: the PR opens, you v
 * **The web UI is unauthenticated by default.** Set `SELKIES_BASIC_AUTH_PASSWORD` whenever the stream is reachable by anyone you don't trust; use HTTPS alongside it (plain HTTP + basic auth leaks the password).
 * Chromium runs with `--no-sandbox` (standard for containerized Chrome without a seccomp profile that allows userns); run the container as a dedicated user/VM you'd be comfortable exposing a browser to.
 * Generated TLS keys are self-signed — browsers will warn; that is expected. Bring a real certificate for anything public.
-* The container runs as **root** by default (the entrypoint is PID 1 and binds the privileged ports 80/443). Set `RUN_USER` (see [Privilege drop (`RUN_USER`)](#privilege-drop-run_user)) to move the desktop stack and the nginx workers off root — PID 1 and the nginx master remain root by design. If your threat model allows it, add `--cap-drop=ALL --security-opt=no-new-privileges` or run behind a reverse proxy on unprivileged ports.
+* The container runs as **root** by default (the entrypoint is PID 1 and binds the privileged ports 80/443 by default). Set `RUN_USER` (see [Privilege drop (`RUN_USER`)](#privilege-drop-run_user)) to move the desktop stack and the nginx workers off root — PID 1 and the nginx master remain root by design. If your threat model allows it, add `--cap-drop=ALL --security-opt=no-new-privileges` or run behind a reverse proxy on unprivileged ports.
 
 ## Troubleshooting
 

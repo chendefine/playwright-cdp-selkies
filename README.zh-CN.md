@@ -106,15 +106,17 @@ docker run -d --name playwright-cdp-selkies \
 
 ## 端口
 
-容器端口**固定,设计如此**;各变量只决定 docker 发布到的**宿主机侧**端口。
+两组相互独立的变量,都在 `.env` 里设置:**容器侧**端口是 nginx 在容器内实际监听的端口;**宿主侧**端口是 docker 发布出去的端口(compose 会自动把它映射到容器侧端口)。
 
-| 容器端口 | 服务 | 宿主端口(默认) | 修改方式 |
-| --- | --- | --- | --- |
-| 80 | Web UI(HTTP) | 8080 | `.env` 里的 `NGINX_HTTP_PORT` |
-| 443 | Web UI(HTTPS,可选) | 8443 | `NGINX_HTTPS_PORT` + [HTTPS](#https-1) |
-| 9222 | Chromium CDP | 9222 | `.env` 里的 `CDP_PORT` |
+| 服务 | 容器端口(默认) | 设置变量 | 宿主端口(默认) | 设置变量 |
+| --- | --- | --- | --- | --- |
+| Web UI(HTTP) | 80 | `WEB_HTTP_PORT` | 8080 | `NGINX_HTTP_PORT` |
+| Web UI(HTTPS,可选) | 443 | `WEB_HTTPS_PORT` | 8443 | `NGINX_HTTPS_PORT` + [HTTPS](#https-1) |
+| Chromium CDP | 9222 | `CDP_LISTEN_PORT` | 9222 | `CDP_PORT` |
 
-除这些固定端口外,`PORT_FORWARDS` 可以追加额外的监听端口,反向代理到 docker 网络里的兄弟容器 —— 见 [Docker 网络(compose)](#docker-网络compose)。
+修改容器侧端口主要用于 `network_mode: host` / 共享网络命名空间,或 docker 网络里的对端需要特定端口的场景;普通端口发布用默认值即可。它们彼此之间、与 `PORT_FORWARDS` 监听端口、与仅回环的 `SELKIES_INTERNAL_PORT` / `CDP_INTERNAL_PORT` 都不得冲突 —— 冲突时入口脚本直接报错退出。用 `docker run` 时通过 `-e` 传入,并相应调整 `-p`(例如 `-e CDP_LISTEN_PORT=9333 -p 9222:9333`)。
+
+除这些端口外,`PORT_FORWARDS` 可以追加额外的监听端口,反向代理到 docker 网络里的兄弟容器 —— 见 [Docker 网络(compose)](#docker-网络compose)。
 
 ## 通过 CDP 接入 Playwright
 
@@ -185,7 +187,9 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `ENABLE_HTTPS` | `false` | `true` = nginx 在容器 443 端口同时提供 TLS 的 Web UI |
+| `WEB_HTTP_PORT` | `80` | nginx 在容器内提供 HTTP Web UI 的端口(见[端口](#端口)) |
+| `WEB_HTTPS_PORT` | `443` | nginx 在容器内提供 TLS Web UI 的端口 |
+| `ENABLE_HTTPS` | `false` | `true` = nginx 在容器 `WEB_HTTPS_PORT` 端口同时提供 TLS 的 Web UI |
 | `TLS_CERT_DIR` | `/etc/nginx/tls` | 证书查找 / 生成目录 |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | `$TLS_CERT_DIR/fullchain.pem` / `privkey.pem` | 显式证书/私钥路径 |
 | `TLS_SELF_SIGNED_CN` | `localhost` | 生成的自签证书 CN |
@@ -217,6 +221,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `CHROMIUM_GPU` | `auto` | `auto` = 有直通 GPU(见 [GPU 直通](#gpu-直通可选))就用硬件渲染,否则 SwiftShader 软件渲染 —— WebGL 始终可用;`off` = 强制软件渲染;`strict` = 永不允许 SwiftShader(无 GPU 则无 WebGL) |
 | `CHROMIUM_DISABLE_FEATURES` | `HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,HttpsFirstModeV2`(compose 默认;不用 compose 时为空) | 逗号分隔的特性列表,以 `--disable-features=` 传给 chromium —— 关闭 HTTPS-First / HTTPS-Upgrade 实验;在 `.env` 里设为空可去掉该参数 |
 | `CHROMIUM_USER_DATA_DIR` | `/tmp/chrome-profile`(compose:`/chrome-user-data`) | 浏览器配置目录 |
+| `CDP_LISTEN_PORT` | `9222` | 公开 CDP 网关在容器内的端口(nginx → chromium;见[端口](#端口)) |
 | `CDP_INTERNAL_PORT` | `9221` | Chromium 回环 DevTools 端口(nginx 后面) |
 
 **桌面 / 容器**
@@ -244,7 +249,7 @@ RUN_USER=pwuser        # 或数字 uid[:gid],例如 1000,与宿主机上
 具体行为:
 
 * 接受已存在的用户名(镜像内置 `pwuser`)或 `uid[:gid]`;数字 id 缺失的 passwd/group 条目会在启动时合成。
-* PID 1 与 nginx **master** 保持 root:nginx 绑定固定的容器端口 80/443 并读取 TLS 密钥,监督进程负责准备浏览器 profile。其余进程经 `setpriv` 以无 capability 状态启动。
+* PID 1 与 nginx **master** 保持 root:nginx 绑定(默认为特权的)监听端口并读取 TLS 密钥,监督进程负责准备浏览器 profile。其余进程经 `setpriv` 以无 capability 状态启动。
 * 浏览器 profile(`CHROMIUM_USER_DATA_DIR`)每次启动都会 `chown` 给该用户 —— 首次迁移较大的 root 属主 profile 需要一点时间,之后只是空遍历。
 * GPU 设备节点保持可用:`/dev/dri` / NVIDIA 节点的宿主机 gid 会被加入补充组。
 * 刻意**不**改变的:chromium 仍带 `--no-sandbox`(Docker 默认 seccomp 对任何 uid 都不允许 userns 沙箱),CDP/web 端口保持不变。收益是文件系统/权限隔离 —— 浏览器被攻破后不再能以 root 写文件。
@@ -328,12 +333,12 @@ PORT_FORWARDS=3080=web:80
 #PORT_FORWARDS=3080=web:80 6080=onlyoffice-documentserver:80
 ```
 
-转发由同一个 nginx 前门提供(无额外进程):支持 WebSocket;经 docker 内嵌 DNS 按请求解析对端 —— 对端容器还没起来时本容器照常启动(对端上线前请求返回 502),对端重建换 IP 后也能自动跟上。转发监听端口不得与 80/443/9222 或其他转发端口冲突。
+转发由同一个 nginx 前门提供(无额外进程):支持 WebSocket;经 docker 内嵌 DNS 按请求解析对端 —— 对端容器还没起来时本容器照常启动(对端上线前请求返回 502),对端重建换 IP 后也能自动跟上。转发监听端口不得与 `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` / `CDP_LISTEN_PORT`(默认 80/443/9222)或其他转发端口冲突。
 
 ## 服务开关、健康检查与重启
 
 * 容器启动 == 服务启动:入口脚本是一个极简 PID 1 监管器,**任一服务退出即退出**,配合 `--restart always` / `restart: always` 即为自动恢复。
-* compose 健康检查每 30 秒轮询 `http://127.0.0.1:80/`(nginx 代理 Selkies)。
+* compose 健康检查每 30 秒轮询 `http://127.0.0.1:${WEB_HTTP_PORT}/`(nginx 代理 Selkies)。
 * 同时设置 `ENABLE_SELKIES=false` 和 `ENABLE_CDP=false` 是配置错误,会立即失败。
 * 日志在容器内 `/tmp/*.log`(`xvfb.log`、`pulseaudio.log`、`chromium.log`、`nginx/*.log`);`docker compose logs` 显示入口脚本自身输出。
 
@@ -394,7 +399,7 @@ node update-playwright-node.mjs --check    # CI 模式:有偏差则退出码 1
 * **Web UI 默认无认证。** 只要串流可能被不信任的人访问,就设置 `SELKIES_BASIC_AUTH_PASSWORD`;同时配合 HTTPS(纯 HTTP + basic auth 会泄露密码)。
 * Chromium 以 `--no-sandbox` 运行(容器化 Chrome 在没有允许 userns 的 seccomp 配置时的标准做法);请把容器当作"暴露一个浏览器"来对待,放在专用的用户/VM 里。
 * 生成的 TLS 密钥是自签的 —— 浏览器会告警,属预期;对公网服务请换用正式证书。
-* 容器默认以 **root** 运行(入口脚本是 PID 1,且需绑定 80/443 特权端口)。设置 `RUN_USER`(见[权限降级(`RUN_USER`)](#权限降级run_user))可把桌面栈与 nginx worker 移出 root —— PID 1 与 nginx master 按设计保持 root。若威胁模型允许,可加 `--cap-drop=ALL --security-opt=no-new-privileges`,或让反向代理监听非特权端口。
+* 容器默认以 **root** 运行(入口脚本是 PID 1,且默认需绑定 80/443 特权端口)。设置 `RUN_USER`(见[权限降级(`RUN_USER`)](#权限降级run_user))可把桌面栈与 nginx worker 移出 root —— PID 1 与 nginx master 按设计保持 root。若威胁模型允许,可加 `--cap-drop=ALL --security-opt=no-new-privileges`,或让反向代理监听非特权端口。
 
 ## 故障排查
 

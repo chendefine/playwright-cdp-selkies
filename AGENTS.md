@@ -90,9 +90,11 @@ node update-playwright-node.mjs --check    # CI drift mode: exit 1 on drift
    changes go into the heredocs in `docker-entrypoint.sh` that generate
    `/tmp/nginx/nginx.conf`; `nginx -t` runs on the generated file before
    start.
-4. **Container ports 80/443/9222 are fixed by design.** `NGINX_HTTP_PORT` /
-   `NGINX_HTTPS_PORT` / `CDP_PORT` pick only the *host-side* published ports.
-   Do not turn them into container-side knobs.
+4. **Two separate port sets — keep them apart.** Container-side listen ports
+   are `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` / `CDP_LISTEN_PORT` (defaults
+   80/443/9222); host-side published ports are `NGINX_HTTP_PORT` /
+   `NGINX_HTTPS_PORT` / `CDP_PORT`. Compose `ports:` and the healthcheck
+   must reference the container-side variables, never a literal port.
 5. **New behavior needs an env knob** with a default that is safe for the
    majority, plus matching entries in `docker-entrypoint.sh`, `.env.example`,
    `compose.yaml` and BOTH READMEs — same PR.

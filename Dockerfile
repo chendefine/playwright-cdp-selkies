@@ -71,7 +71,9 @@ RUN install -d -m 777 "${PLAYWRIGHT_BROWSERS_PATH}" "${PLAYWRIGHT_BROWSERS_PATH}
 
 # === NGINX FRONT DOOR (CDP gateway + web reverse proxy) ===
 # nginx fronts every public port (replaces the previous socat forwarder) on
-# FIXED container ports (host-side publishing is docker's -p / compose ports):
+# these container ports — defaults shown; WEB_HTTP_PORT / WEB_HTTPS_PORT /
+# CDP_LISTEN_PORT change them at runtime (host-side publishing is docker's
+# -p / compose ports):
 #   * 0.0.0.0:80   -> Selkies web UI over HTTP (always on)
 #   * 0.0.0.0:443  -> Selkies web UI over TLS (only when the container is
 #     started with ENABLE_HTTPS=true; nginx does not listen on 443 otherwise.
@@ -189,10 +191,12 @@ ENV PULSE_RUNTIME_PATH="/tmp/pulse"
 ENV PULSE_SERVER="unix:/tmp/pulse/native"
 ENV PIPEWIRE_LATENCY="256/48000"
 
-# Ports as served INSIDE the container (all by nginx, fixed by design):
-# 80 = web UI over HTTP (always), 443 = web UI over HTTPS (only when run with
-# ENABLE_HTTPS=true — nginx does not listen on 443 otherwise), 9222 = chromium
-# CDP endpoint. Host-side ports are chosen by docker run -p / compose ports.
+# Default ports served INSIDE the container (all by nginx; overridable at
+# runtime via WEB_HTTP_PORT / WEB_HTTPS_PORT / CDP_LISTEN_PORT — EXPOSE is
+# documentation only): 80 = web UI over HTTP (always), 443 = web UI over HTTPS
+# (only when run with ENABLE_HTTPS=true — nginx does not listen on it
+# otherwise), 9222 = chromium CDP endpoint. Host-side ports are chosen by
+# docker run -p / compose ports.
 EXPOSE 80 443 9222
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
