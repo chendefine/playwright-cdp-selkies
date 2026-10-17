@@ -150,6 +150,17 @@ services:
       # white sheet on light pages. false = the old flat look.
       ENABLE_COMPOSITOR: "${ENABLE_COMPOSITOR:-true}"
 
+      # --- Privilege drop ---
+      # Run the desktop stack (Xvfb, picom, PulseAudio, selkies, chromium)
+      # and the nginx WORKERS as this user instead of root. Empty (default)
+      # = everything runs as root (the historical behavior). Accepts an
+      # existing username (e.g. pwuser, which the image ships) or uid[:gid]
+      # — missing passwd/group entries for a numeric id are synthesized at
+      # startup, and the browser profile mount is chowned to the user on
+      # every start. PID 1 and the nginx master always stay root: nginx
+      # binds the fixed container ports 80/443 and reads the TLS key.
+      RUN_USER: "${RUN_USER:-}"
+
     healthcheck:
       # nginx answers 200 on / (fixed container port 80) once up, fronting
       # Selkies; Chromium is checked implicitly by the entrypoint (it exits

@@ -37,6 +37,7 @@ docker run ─┬─ Xvfb        virtual display (what Selkies streams)
 - [Configuration](#configuration)
   - [Build arguments](#build-arguments)
   - [Environment variables](#environment-variables)
+  - [Privilege drop (`RUN_USER`)](#privilege-drop-run_user)
   - [Timezone and language](#timezone-and-language)
 - [HTTPS](#https)
 - [Persistence](#persistence)
@@ -226,6 +227,28 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `SCREEN_GEOMETRY` | `1920x1080x24` | Xvfb screen size `WxHxD`; also sizes the Selkies stream |
 | `ENABLE_COMPOSITOR` | `true` | run picom on the Xvfb display so Chromium popup menus (right-click context menu) keep their drop shadows — without a compositor they render as seemingly borderless white sheets; `false` = old flat look |
 | `SHM_SIZE` (compose) | `1gb` | `/dev/shm` size — Chromium needs more than the 64 MB docker default |
+| `RUN_USER` | *(empty)* | run the desktop stack (Xvfb, picom, PulseAudio, selkies, chromium) and the nginx *workers* as this user instead of root — an existing username (e.g. `pwuser`) or `uid[:gid]`; PID 1 and the nginx master stay root. See [Privilege drop (`RUN_USER`)](#privilege-drop-run_user) |
+
+### Privilege drop (`RUN_USER`)
+
+By default every process in the container runs as root (the historical
+behavior). Set `RUN_USER` to move the desktop stack — Xvfb, picom,
+PulseAudio, selkies and Chromium, plus the nginx *workers* — to an
+unprivileged user:
+
+```bash
+# compose (.env)
+RUN_USER=pwuser        # or a numeric uid[:gid], e.g. 1000 to match the
+                       # uid that owns ./chrome-user-data on the host
+```
+
+What it does:
+
+* Accepts an existing username (`pwuser` ships in the image) or `uid[:gid]`; missing passwd/group entries for a numeric id are synthesized at startup.
+* PID 1 and the nginx **master** stay root: nginx binds the fixed container ports 80/443 and reads the TLS key, and the supervisor prepares the browser profile. Everything else is started via `setpriv`, with no capabilities.
+* The browser profile (`CHROMIUM_USER_DATA_DIR`) is `chown`ed to the user on every start — the first migration of a large root-owned profile can take a moment; afterwards it is a no-op walk.
+* GPU device nodes stay usable: the host gid of each `/dev/dri` / NVIDIA node is added to the supplementary group set.
+* What it deliberately does *not* change: Chromium keeps `--no-sandbox` (Docker's default seccomp profile blocks the userns sandbox for any uid) and the CDP/web ports stay as they are. The gain is filesystem/privilege isolation — a compromised browser can no longer write as root.
 
 ### Timezone and language
 
@@ -372,7 +395,7 @@ Without the secret everything still works, just human-gated: the PR opens, you v
 * **The web UI is unauthenticated by default.** Set `SELKIES_BASIC_AUTH_PASSWORD` whenever the stream is reachable by anyone you don't trust; use HTTPS alongside it (plain HTTP + basic auth leaks the password).
 * Chromium runs with `--no-sandbox` (standard for containerized Chrome without a seccomp profile that allows userns); run the container as a dedicated user/VM you'd be comfortable exposing a browser to.
 * Generated TLS keys are self-signed — browsers will warn; that is expected. Bring a real certificate for anything public.
-* The container runs as **root** (the entrypoint is PID 1 and binds the privileged ports 80/443). If your threat model allows it, add `--cap-drop=ALL --security-opt=no-new-privileges` or run behind a reverse proxy on unprivileged ports.
+* The container runs as **root** by default (the entrypoint is PID 1 and binds the privileged ports 80/443). Set `RUN_USER` (see [Privilege drop (`RUN_USER`)](#privilege-drop-run_user)) to move the desktop stack and the nginx workers off root — PID 1 and the nginx master remain root by design. If your threat model allows it, add `--cap-drop=ALL --security-opt=no-new-privileges` or run behind a reverse proxy on unprivileged ports.
 
 ## Troubleshooting
 

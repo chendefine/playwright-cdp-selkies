@@ -82,6 +82,19 @@
 #                                See the PORT_FORWARDS section below the nginx
 #                                front door for details (late peer startup,
 #                                WebSocket support, collision rules).
+#   RUN_USER=""                  privilege drop for the desktop stack (Xvfb,
+#                                picom, PulseAudio, selkies, chromium) and the
+#                                nginx workers. Empty (default) = everything
+#                                runs as root (the historical behavior). A
+#                                user name that exists in /etc/passwd (e.g.
+#                                pwuser) or uid[:gid] (missing passwd/group
+#                                entries are synthesized at startup) runs those
+#                                daemons as that user instead. PID 1 and the
+#                                nginx master always stay root: nginx binds the
+#                                fixed container ports 80/443 and reads the
+#                                TLS key, and the supervisor keeps preparing
+#                                the browser profile (chowned to the user on
+#                                every start).
 set -uo pipefail
 
 log() { echo "[entrypoint] $*"; }
@@ -154,6 +167,95 @@ PULSE_RUNTIME_PATH="${PULSE_RUNTIME_PATH:-${XDG_RUNTIME_DIR}/pulse}"
 PULSE_SERVER="${PULSE_SERVER:-unix:${PULSE_RUNTIME_PATH}/native}"
 export PULSE_RUNTIME_PATH PULSE_SERVER
 
+# --- privilege drop (RUN_USER) ------------------------------------------------
+# RUN_USER runs the desktop stack — Xvfb, picom, PulseAudio, Selkies,
+# Chromium — and the nginx workers as an unprivileged user. PID 1 and the
+# nginx MASTER stay root: nginx binds the fixed container ports 80/443 and
+# reads the TLS key, and the supervisor must keep chown-ing the browser
+# profile. Empty (default) = everything runs as root, exactly the historical
+# behavior: DROP stays an empty array and every "${DROP[@]}" prefix below is
+# a no-op.
+RUN_USER="${RUN_USER:-}"
+DROP=()
+run_uid="" run_gid="" run_name=""
+RUN_NGINX_USER=""
+if [ -n "${RUN_USER}" ]; then
+    if [[ "${RUN_USER}" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
+        run_uid="${RUN_USER%%:*}"
+        run_gid="${RUN_USER#*:}"
+        [ "${run_gid}" != "${RUN_USER}" ] || run_gid="${run_uid}"
+        [ "${run_uid}" != "0" ] \
+            || die "RUN_USER=0 would drop privileges to root; pick a real unprivileged uid"
+        # nginx's `user` directive takes a NAME and the daemons want a HOME:
+        # synthesize passwd/group entries for bare numeric ids (idempotent —
+        # an entry created on an earlier `docker restart` is simply reused).
+        getent group "${run_gid}" >/dev/null 2>&1 \
+            || groupadd -g "${run_gid}" "run${run_gid}"
+        run_name="$(getent passwd "${run_uid}" | cut -d: -f1 || true)"
+        if [ -z "${run_name}" ]; then
+            useradd -o -u "${run_uid}" -g "${run_gid}" -d /tmp/run-home \
+                -s /usr/sbin/nologin "run${run_uid}"
+            run_name="run${run_uid}"
+        fi
+    else
+        run_name="${RUN_USER}"
+        passwd_entry="$(getent passwd "${run_name}")" \
+            || die "RUN_USER=${RUN_USER}: no such user in /etc/passwd (use a name like pwuser, or uid[:gid])"
+        run_uid="$(echo "${passwd_entry}" | cut -d: -f3)"
+        run_gid="$(echo "${passwd_entry}" | cut -d: -f4)"
+    fi
+
+    # A writable HOME of the run user: chromium's crashpad handler and
+    # pulse's cookie file live under it (verified: with root's /root left in
+    # place both fail with permission errors).
+    run_home="$(getent passwd "${run_uid}" | cut -d: -f6)"
+    mkdir -p "${run_home}"
+    chown "${run_uid}:${run_gid}" "${run_home}"
+    export HOME="${run_home}"
+
+    # GPU device nodes are root:<gid> 0660 — a dropped Chromium (Vulkan/
+    # ANGLE) or a hardware Selkies encoder needs the device gids kept in the
+    # supplementary group set (the gids come from the nodes, which belong to
+    # the HOST, not from the container's /etc/group).
+    run_groups=""
+    for dev in /dev/dri/* /dev/nvidiactl /dev/nvidia[0-9]*; do
+        [ -e "${dev}" ] || continue
+        dev_gid="$(stat -c %g "${dev}" 2>/dev/null || true)"
+        [ -n "${dev_gid}" ] || continue
+        case ",${run_groups}," in
+            *",${dev_gid},"*) : ;;
+            *) run_groups="${run_groups:+${run_groups},}${dev_gid}" ;;
+        esac
+    done
+    # setpriv demands an explicit group decision alongside --regid.
+    if [ -n "${run_groups}" ]; then
+        DROP=(setpriv --reuid="${run_uid}" --regid="${run_gid}" --groups="${run_groups}")
+    else
+        DROP=(setpriv --reuid="${run_uid}" --regid="${run_gid}" --clear-groups)
+    fi
+    RUN_NGINX_USER="${run_name}"
+
+    # The browser profile is opened read-write by chromium: own it by the
+    # run user (covers fresh root-created dirs and leftovers from earlier
+    # root-mode starts alike; a no-op walk once everything is owned).
+    mkdir -p "${CHROMIUM_USER_DATA_DIR}"
+    chown_begin="$(date +%s)"
+    chown -R "${run_uid}:${run_gid}" "${CHROMIUM_USER_DATA_DIR}"
+    log "RUN_USER: ${CHROMIUM_USER_DATA_DIR} now owned by ${run_uid}:${run_gid} ($(( $(date +%s) - chown_begin ))s)"
+
+    # Root-owned runtime leftovers (e.g. after `docker restart` of a
+    # container that previously ran as root) would block the dropped
+    # daemons: the pulse socket dir is 0700 and a stale X socket cannot be
+    # unlinked across uids. Remove them; each daemon recreates its own as
+    # the run user. The X socket dir is pre-created here too — a non-root
+    # Xvfb refuses to create it "securely" itself (_XSERVTransmkdir error).
+    rm -rf "${PULSE_RUNTIME_PATH}"
+    rm -f /tmp/.X11-unix/X*
+    mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
+    log "RUN_USER: desktop stack + nginx workers run as ${run_name} (uid=${run_uid} gid=${run_gid}${run_groups:+ groups=${run_groups}}); PID 1 + nginx master stay root"
+fi
+
 # --- PID 1 duties: reap children, forward docker stop ------------------------
 pids=()
 cleanup() {
@@ -174,7 +276,7 @@ trap 'cleanup' EXIT
 # --- 1. virtual display + 2. audio (only needed by Selkies) ------------------
 if [ "${ENABLE_SELKIES}" = "true" ]; then
     log "starting Xvfb on display ${DISPLAY} (${SCREEN_GEOMETRY})"
-    Xvfb "${DISPLAY}" -screen 0 "${SCREEN_GEOMETRY}" +extension "COMPOSITE" \
+    "${DROP[@]}" Xvfb "${DISPLAY}" -screen 0 "${SCREEN_GEOMETRY}" +extension "COMPOSITE" \
         +extension "DAMAGE" +extension "RANDR" +extension "RENDER" \
         +extension "XTEST" -nolisten tcp -ac -noreset \
         >/tmp/xvfb.log 2>&1 &
@@ -198,7 +300,7 @@ if [ "${ENABLE_SELKIES}" = "true" ]; then
             printf 'shadow = false\nfading = false\nbackend = "xrender"\n' \
                 >/tmp/picom.conf
             log "starting picom compositor on display ${DISPLAY}"
-            picom --config /tmp/picom.conf >/tmp/picom.log 2>&1 &
+            "${DROP[@]}" picom --config /tmp/picom.conf >/tmp/picom.log 2>&1 &
             picom_pid=$!
             pids+=("${picom_pid}")
             sleep 0.5
@@ -209,8 +311,15 @@ if [ "${ENABLE_SELKIES}" = "true" ]; then
     fi
 
     log "starting PulseAudio (socket ${PULSE_SERVER})"
-    mkdir -p "${PULSE_RUNTIME_PATH}"
-    pulseaudio --daemonize=no --exit-idle-time=-1 --disallow-exit \
+    # PulseAudio demands a 0700 runtime dir owned by its own uid ("Failed to
+    # create secure directory" + exit otherwise), so a plain root mkdir -p
+    # breaks the RUN_USER mode: hand the dir over when dropping privileges.
+    if [ "${#DROP[@]}" -gt 0 ]; then
+        install -d -o "${run_uid}" -g "${run_gid}" -m 700 "${PULSE_RUNTIME_PATH}"
+    else
+        mkdir -p "${PULSE_RUNTIME_PATH}"
+    fi
+    "${DROP[@]}" pulseaudio --daemonize=no --exit-idle-time=-1 --disallow-exit \
         >/tmp/pulseaudio.log 2>&1 &
     pids+=($!)
     for _ in $(seq 1 50); do [ -S "${PULSE_SERVER#unix:}" ] && break; sleep 0.2; done
@@ -237,7 +346,7 @@ if [ "${ENABLE_SELKIES}" = "true" ]; then
     # TLS terminates at nginx, so selkies itself always serves plain HTTP on
     # the loopback port nginx proxies to.
     # shellcheck disable=SC2086
-    selkies \
+    "${DROP[@]}" selkies \
         --addr="${SELKIES_ADDR}" \
         --port="${SELKIES_INTERNAL_PORT}" \
         --encoder="${SELKIES_ENCODER:-h264enc}" \
@@ -387,8 +496,8 @@ if [ "${ENABLE_CDP}" = "true" ]; then
     # the profile, so a persisted profile keeps the locale of its first run
     # and the LANG env var alone cannot retarget it (verified: seeding +
     # LANG retargets a persisted profile to the requested locale).
-    mkdir -p "${CHROMIUM_USER_DATA_DIR}/Default"
-    python3 - "${CHROMIUM_USER_DATA_DIR}/Default/Preferences" "${CHROMIUM_LANG}" <<'PYSEED'
+    "${DROP[@]}" mkdir -p "${CHROMIUM_USER_DATA_DIR}/Default"
+    "${DROP[@]}" python3 - "${CHROMIUM_USER_DATA_DIR}/Default/Preferences" "${CHROMIUM_LANG}" <<'PYSEED'
 import json, sys
 path, lang = sys.argv[1], sys.argv[2]
 langs = lang + "," + lang.split("-")[0]
@@ -414,7 +523,7 @@ PYSEED
     # Map the BCP-47 spelling (e.g. en-US) to the POSIX one (en_US.UTF-8).
     CHROMIUM_LOCALE_POSIX="$(echo "${CHROMIUM_LANG}" | tr '-' '_').UTF-8"
     LANG="${CHROMIUM_LOCALE_POSIX}" LC_ALL="${CHROMIUM_LOCALE_POSIX}" \
-        "${CHROME_BIN}" "${CHROMIUM_FLAGS[@]}" "${CHROMIUM_START_URL}" \
+        "${DROP[@]}" "${CHROME_BIN}" "${CHROMIUM_FLAGS[@]}" "${CHROMIUM_START_URL}" \
         >/tmp/chromium.log 2>&1 &
     pids+=($!)
 
@@ -617,6 +726,18 @@ fi
 NGINX_CONF=/tmp/nginx/nginx.conf
 mkdir -p /tmp/nginx/client_body /tmp/nginx/proxy /tmp/nginx/fastcgi \
          /tmp/nginx/uwsgi /tmp/nginx/scgi
+# Workers buffer large request bodies through these temp dirs as their own
+# uid — hand them over when privileges are dropped (nobody, the compiled
+# default, cannot write into root-owned 0755 dirs either, but RUN_USER
+# should not inherit that wart).
+[ -n "${RUN_NGINX_USER}" ] \
+    && chown -R "${run_uid}:${run_gid}" /tmp/nginx
+
+# nginx workers as the RUN_USER (the `user` directive takes a NAME, which
+# is why numeric ids get a synthesized passwd entry above); empty = compiled
+# default nobody, the historical behavior.
+NGINX_USER_CONF=""
+[ -n "${RUN_NGINX_USER}" ] && NGINX_USER_CONF="user ${RUN_NGINX_USER};"
 
 WEB_SERVERS=""
 if [ "${ENABLE_SELKIES}" = "true" ]; then
@@ -689,6 +810,7 @@ fi
 cat > "${NGINX_CONF}" <<EOF
 # generated by docker-entrypoint.sh at container start — do not edit
 daemon off;
+${NGINX_USER_CONF}
 worker_processes auto;
 pid /tmp/nginx/nginx.pid;
 error_log /tmp/nginx/error.log warn;

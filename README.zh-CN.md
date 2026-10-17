@@ -37,6 +37,7 @@ docker run ─┬─ Xvfb        虚拟显示(Selkies 采集的画面)
 - [配置](#配置)
   - [构建参数](#构建参数)
   - [环境变量](#环境变量)
+  - [权限降级(`RUN_USER`)](#权限降级run_user)
   - [时区与语言](#时区与语言)
 - [HTTPS](#https-1)
 - [持久化](#持久化)
@@ -226,6 +227,27 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `SCREEN_GEOMETRY` | `1920x1080x24` | Xvfb 屏幕尺寸 `宽x高x深`;同时决定 Selkies 串流分辨率 |
 | `ENABLE_COMPOSITOR` | `true` | 在 Xvfb 显示器上运行合成器(picom),让 Chromium 的弹出菜单(右键菜单)保留投影 —— 没有合成器时菜单会渲染成看似无边框的白色贴片;`false` = 恢复旧的扁平外观 |
 | `SHM_SIZE`(compose) | `1gb` | `/dev/shm` 大小 —— Chromium 需要比 docker 默认 64 MB 更多的空间 |
+| `RUN_USER` | *(空)* | 桌面栈(Xvfb、picom、PulseAudio、selkies、chromium)与 nginx *worker* 以该用户而非 root 运行 —— 已存在的用户名(如 `pwuser`)或 `uid[:gid]`;PID 1 与 nginx master 保持 root。见[权限降级(`RUN_USER`)](#权限降级run_user) |
+
+### 权限降级(`RUN_USER`)
+
+默认情况下容器内所有进程都以 root 运行(历史行为)。设置 `RUN_USER` 把
+桌面栈 —— Xvfb、picom、PulseAudio、selkies、chromium,以及 nginx 的
+*worker* —— 迁移到非特权用户:
+
+```bash
+# compose(.env)
+RUN_USER=pwuser        # 或数字 uid[:gid],例如 1000,与宿主机上
+                       # ./chrome-user-data 的属主 uid 对齐
+```
+
+具体行为:
+
+* 接受已存在的用户名(镜像内置 `pwuser`)或 `uid[:gid]`;数字 id 缺失的 passwd/group 条目会在启动时合成。
+* PID 1 与 nginx **master** 保持 root:nginx 绑定固定的容器端口 80/443 并读取 TLS 密钥,监督进程负责准备浏览器 profile。其余进程经 `setpriv` 以无 capability 状态启动。
+* 浏览器 profile(`CHROMIUM_USER_DATA_DIR`)每次启动都会 `chown` 给该用户 —— 首次迁移较大的 root 属主 profile 需要一点时间,之后只是空遍历。
+* GPU 设备节点保持可用:`/dev/dri` / NVIDIA 节点的宿主机 gid 会被加入补充组。
+* 刻意**不**改变的:chromium 仍带 `--no-sandbox`(Docker 默认 seccomp 对任何 uid 都不允许 userns 沙箱),CDP/web 端口保持不变。收益是文件系统/权限隔离 —— 浏览器被攻破后不再能以 root 写文件。
 
 ### 时区与语言
 
@@ -372,7 +394,7 @@ node update-playwright-node.mjs --check    # CI 模式:有偏差则退出码 1
 * **Web UI 默认无认证。** 只要串流可能被不信任的人访问,就设置 `SELKIES_BASIC_AUTH_PASSWORD`;同时配合 HTTPS(纯 HTTP + basic auth 会泄露密码)。
 * Chromium 以 `--no-sandbox` 运行(容器化 Chrome 在没有允许 userns 的 seccomp 配置时的标准做法);请把容器当作"暴露一个浏览器"来对待,放在专用的用户/VM 里。
 * 生成的 TLS 密钥是自签的 —— 浏览器会告警,属预期;对公网服务请换用正式证书。
-* 容器以 **root** 运行(入口脚本是 PID 1,且需绑定 80/443 特权端口)。若威胁模型允许,可加 `--cap-drop=ALL --security-opt=no-new-privileges`,或让反向代理监听非特权端口。
+* 容器默认以 **root** 运行(入口脚本是 PID 1,且需绑定 80/443 特权端口)。设置 `RUN_USER`(见[权限降级(`RUN_USER`)](#权限降级run_user))可把桌面栈与 nginx worker 移出 root —— PID 1 与 nginx master 按设计保持 root。若威胁模型允许,可加 `--cap-drop=ALL --security-opt=no-new-privileges`,或让反向代理监听非特权端口。
 
 ## 故障排查
 
