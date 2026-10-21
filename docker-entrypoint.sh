@@ -159,7 +159,7 @@ SELKIES_ADDR="${SELKIES_ADDR:-127.0.0.1}"
 SELKIES_SUBFOLDER="${SELKIES_SUBFOLDER:-}"
 SELKIES_SUBFOLDER="${SELKIES_SUBFOLDER#"${SELKIES_SUBFOLDER%%[!/]*}"}"   # strip leading /
 SELKIES_SUBFOLDER="${SELKIES_SUBFOLDER%"${SELKIES_SUBFOLDER##*[!/]}"}"   # strip trailing /
-case "/${SELKIES_SUBFOLDER}/" in
+case "${SELKIES_SUBFOLDER:+/${SELKIES_SUBFOLDER}/}" in   # empty = root, nothing to check
     *[!A-Za-z0-9._~/-]*|*//*|*/./*|*/../*)
         die "SELKIES_SUBFOLDER='${SELKIES_SUBFOLDER}' must be a plain URL path like /desk or /a/b" ;;
 esac
