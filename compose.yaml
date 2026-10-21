@@ -131,6 +131,11 @@ services:
       SELKIES_BASIC_AUTH_PASSWORD: "${SELKIES_BASIC_AUTH_PASSWORD:-}"
       # h264enc (default) | h264enc-striped | openh264enc | jpeg
       SELKIES_ENCODER: "${SELKIES_ENCODER:-h264enc}"
+      # URL path prefix the web UI is served under, e.g. "/desk" ->
+      # http://host:port/desk/ (slashes optional; empty = site root). An
+      # outer reverse proxy mounting it at a subpath must forward the path
+      # UNCHANGED (no prefix stripping). / and /desk redirect to /desk/.
+      SELKIES_SUBFOLDER: "${SELKIES_SUBFOLDER:-}"
       # Extra CLI flags passed to `selkies`
       SELKIES_EXTRA_ARGS: "${SELKIES_EXTRA_ARGS:-}"
 
@@ -192,7 +197,7 @@ services:
 
     healthcheck:
       # nginx answers 200 on / (container port NGINX_LISTEN_HTTP_PORT) once up,
-      # fronting Selkies; Chromium is checked implicitly by the entrypoint
+      # fronting Selkies (a 302 to SELKIES_SUBFOLDER, which curl -f accepts); Chromium is checked implicitly by the entrypoint
       # (it exits and docker restarts if any service dies).
       test: [ "CMD", "curl", "-sf", "http://127.0.0.1:${NGINX_LISTEN_HTTP_PORT:-80}/" ]
       interval: 30s

@@ -50,6 +50,10 @@
 #   TLS_CERT_FILE/TLS_KEY_FILE  explicit cert/key paths (default inside TLS_CERT_DIR)
 #   TLS_SELF_SIGNED_CN=localhost CN of the generated self-signed certificate
 #   SELKIES_INTERNAL_PORT=8081  loopback port Selkies binds to (behind nginx)
+#   SELKIES_SUBFOLDER=""         URL path prefix the web UI is served under
+#                                (e.g. /desk -> http://host:port/desk/); empty
+#                                = the site root. Selkies' native setting; nginx
+#                                additionally redirects / and /desk to /desk/
 #   SELKIES_BASIC_AUTH_PASSWORD  set it to enable the login screen
 #   SELKIES_ENCODER=h264enc      h264enc | h264enc-striped | openh264enc | jpeg
 #   SCREEN_GEOMETRY=1920x1080x24 Xvfb screen size (the working size; also
@@ -148,6 +152,18 @@ fi
 # Selkies itself is loopback-only; nginx is the public front door.
 SELKIES_INTERNAL_PORT="${SELKIES_INTERNAL_PORT:-8081}"
 SELKIES_ADDR="${SELKIES_ADDR:-127.0.0.1}"
+# URL path prefix of the web UI (empty = root). Normalized to the form both
+# selkies and the nginx locations below expect: "/a/b" — leading slash, no
+# trailing one. Restricted to URL-safe path characters, as the value lands
+# verbatim in nginx location/return directives.
+SELKIES_SUBFOLDER="${SELKIES_SUBFOLDER:-}"
+SELKIES_SUBFOLDER="${SELKIES_SUBFOLDER#"${SELKIES_SUBFOLDER%%[!/]*}"}"   # strip leading /
+SELKIES_SUBFOLDER="${SELKIES_SUBFOLDER%"${SELKIES_SUBFOLDER##*[!/]}"}"   # strip trailing /
+case "/${SELKIES_SUBFOLDER}/" in
+    *[!A-Za-z0-9._~/-]*|*//*|*/./*|*/../*)
+        die "SELKIES_SUBFOLDER='${SELKIES_SUBFOLDER}' must be a plain URL path like /desk or /a/b" ;;
+esac
+[ -n "${SELKIES_SUBFOLDER}" ] && SELKIES_SUBFOLDER="/${SELKIES_SUBFOLDER}"
 
 # nginx public listen ports INSIDE the container (host-side publishing of
 # these ports is a separate choice made by docker: compose "ports:" /
@@ -450,7 +466,7 @@ if [ "${ENABLE_SELKIES}" = "true" ]; then
         AUTH_FLAG="--enable-basic-auth=false"
     fi
 
-    log "starting selkies on ${SELKIES_ADDR}:${SELKIES_INTERNAL_PORT} (encoder ${SELKIES_ENCODER:-h264enc}, fronted by nginx)"
+    log "starting selkies on ${SELKIES_ADDR}:${SELKIES_INTERNAL_PORT} (encoder ${SELKIES_ENCODER:-h264enc}, path ${SELKIES_SUBFOLDER:-/}, fronted by nginx)"
     # Extra settings ride the native SELKIES_* env vars (CLI > env > default).
     # TLS terminates at nginx, so selkies itself always serves plain HTTP on
     # the loopback port nginx proxies to.
@@ -458,6 +474,7 @@ if [ "${ENABLE_SELKIES}" = "true" ]; then
     "${DROP[@]}" selkies \
         --addr="${SELKIES_ADDR}" \
         --port="${SELKIES_INTERNAL_PORT}" \
+        --subfolder="${SELKIES_SUBFOLDER}" \
         --encoder="${SELKIES_ENCODER:-h264enc}" \
         --enable-resize="${SELKIES_ENABLE_RESIZE:-false}" \
         ${AUTH_FLAG} \
@@ -926,14 +943,32 @@ NGINX_USER_CONF=""
 
 WEB_SERVERS=""
 if [ "${ENABLE_SELKIES}" = "true" ]; then
+    # Selkies serves every route under SELKIES_SUBFOLDER itself, so requests
+    # pass through unmodified (no prefix stripping). With a subfolder, the
+    # bare root and the slash-less prefix redirect to "<prefix>/": the web
+    # client derives its API/WebSocket base from the page URL's directory.
+    # Relative redirects keep working behind docker port mapping and an
+    # outer reverse proxy, where nginx's own host:port would be wrong.
+    WEB_LOCATIONS="        location / {
+            proxy_pass http://127.0.0.1:${SELKIES_INTERNAL_PORT};
+        }"
+    if [ -n "${SELKIES_SUBFOLDER}" ]; then
+        WEB_LOCATIONS="${WEB_LOCATIONS}
+        location = / {
+            absolute_redirect off;
+            return 302 ${SELKIES_SUBFOLDER}/;
+        }
+        location = ${SELKIES_SUBFOLDER} {
+            absolute_redirect off;
+            return 301 ${SELKIES_SUBFOLDER}/;
+        }"
+    fi
     WEB_SERVERS="$(cat <<EOF
     # web UI over plain HTTP (always on)
     server {
         listen ${LISTEN_PREFIX}${NGINX_LISTEN_HTTP_PORT};
         server_name _;
-        location / {
-            proxy_pass http://127.0.0.1:${SELKIES_INTERNAL_PORT};
-        }
+${WEB_LOCATIONS}
     }
 EOF
 )"
@@ -949,9 +984,7 @@ $(cat <<EOF
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_session_cache shared:SSL:10m;
         ssl_session_timeout 1d;
-        location / {
-            proxy_pass http://127.0.0.1:${SELKIES_INTERNAL_PORT};
-        }
+${WEB_LOCATIONS}
     }
 EOF
 )"

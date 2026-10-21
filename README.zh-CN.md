@@ -156,6 +156,27 @@ await browser.close();  // 只关闭 CDP 会话,不关浏览器
 
 设置密码(`SELKIES_BASIC_AUTH_PASSWORD`,用户名默认 `ubuntu`,见[环境变量](#环境变量))即可为串流启用登录页。
 
+### 挂载到子路径
+
+要把 Web UI 挂到 `https://example.com/desk/` 这样的路径下,在 `.env` 里设置前缀(首尾斜杠可选,也支持 `/tools/desk` 这类多级路径):
+
+```bash
+SELKIES_SUBFOLDER=/desk
+```
+
+此时 Selkies 把页面、静态资源、API 和 WebSocket 全部放在 `/desk/` 下提供,nginx 会把 `/` 和 `/desk` 重定向到 `/desk/`。外层反向代理必须**原样**转发路径(不要剥离前缀),并保留 WebSocket 头,例如 nginx:
+
+```nginx
+location /desk/ {
+    proxy_pass http://docker-host:8080;   # 不带 URI 部分 -> 路径原样转发
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 86400s;
+}
+```
+
 ## 配置
 
 全部通过环境变量配置;使用 Compose 时写入 `.env`(模板见 [.env.example](.env.example))。未在 `compose.yaml` 里显式列出的变量也会经 `env_file` 直通进容器 —— 包括 Selkies 原生设置,如 `SELKIES_FRAMERATE=30`、`SELKIES_TURN_URL=...`。
@@ -209,6 +230,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `SELKIES_BASIC_AUTH_USER`     | `ubuntu`  | 登录用户名                                                |
 | `SELKIES_ENCODER`             | `h264enc` | `h264enc` \| `h264enc-striped` \| `openh264enc` \| `jpeg` |
 | `SELKIES_EXTRA_ARGS`          | *(空)*    | 追加到 `selkies` 的额外 CLI 参数                          |
+| `SELKIES_SUBFOLDER`           | *(空)*    | Web UI 的 URL 路径前缀,如 `/desk` → `http://host:8080/desk/`;空 = 站点根路径(见[挂载到子路径](#挂载到子路径)) |
 | `SELKIES_INTERNAL_PORT`       | `8081`    | Selkies 绑定的回环端口(nginx 后面)                        |
 
 **Chromium / CDP**
@@ -360,7 +382,7 @@ NGINX_LISTEN_ADDR=127.0.0.1   # 建议:CDP 与 Web UI 不暴露到网络
 ## 服务开关、健康检查与重启
 
 * 容器启动 == 服务启动:入口脚本是一个极简 PID 1 监管器,**任一服务退出即退出**,配合 `--restart always` / `restart: always` 即为自动恢复。
-* compose 健康检查每 30 秒轮询 `http://127.0.0.1:${NGINX_LISTEN_HTTP_PORT}/`(nginx 代理 Selkies)。
+* compose 健康检查每 30 秒轮询 `http://127.0.0.1:${NGINX_LISTEN_HTTP_PORT}/`(nginx 代理 Selkies;设置了 `SELKIES_SUBFOLDER` 时返回重定向,同样视为健康)。
 * 同时设置 `ENABLE_SELKIES=false` 和 `ENABLE_CDP=false` 是配置错误,会立即失败。
 * 日志在容器内 `/tmp/*.log`(`xvfb.log`、`pulseaudio.log`、`chromium.log`、`nginx/*.log`);`docker compose logs` 显示入口脚本自身输出。
 

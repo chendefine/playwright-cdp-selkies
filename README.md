@@ -156,6 +156,27 @@ Open <http://localhost:8080>. Selkies streams the Xvfb display (with audio) stra
 
 Protect the stream with a login screen by setting a password (`SELKIES_BASIC_AUTH_PASSWORD`, username defaults to `ubuntu` — see [Environment variables](#environment-variables)).
 
+### Serving under a subpath
+
+To mount the web UI at a path such as `https://example.com/desk/`, set the prefix in `.env` (slashes optional, nested paths like `/tools/desk` work):
+
+```bash
+SELKIES_SUBFOLDER=/desk
+```
+
+Selkies then serves everything — page, assets, API and WebSockets — under `/desk/`, and nginx redirects `/` and `/desk` to `/desk/`. The outer reverse proxy must forward the path **unchanged** (no prefix stripping) and keep the WebSocket headers, e.g. with nginx:
+
+```nginx
+location /desk/ {
+    proxy_pass http://docker-host:8080;   # no URI part -> path kept as-is
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 86400s;
+}
+```
+
 ## Configuration
 
 Everything is configured via environment variables; with Compose, put them in `.env` (see [.env.example](.env.example)). Variables not explicitly listed in `compose.yaml` still reach the container through the `env_file` pass-through — that includes native Selkies settings such as `SELKIES_FRAMERATE=30` or `SELKIES_TURN_URL=...`.
@@ -209,6 +230,7 @@ docker compose build --build-arg PLAYWRIGHT_VERSION=1.62.1
 | `SELKIES_BASIC_AUTH_USER`     | `ubuntu`  | login username                                            |
 | `SELKIES_ENCODER`             | `h264enc` | `h264enc` \| `h264enc-striped` \| `openh264enc` \| `jpeg` |
 | `SELKIES_EXTRA_ARGS`          | *(empty)* | extra CLI flags appended to `selkies`                     |
+| `SELKIES_SUBFOLDER`           | *(empty)* | URL path prefix of the web UI, e.g. `/desk` → `http://host:8080/desk/`; empty = site root (see [Serving under a subpath](#serving-under-a-subpath)) |
 | `SELKIES_INTERNAL_PORT`       | `8081`    | loopback port Selkies binds to (behind nginx)             |
 
 **Chromium / CDP**
@@ -361,7 +383,7 @@ What changes in this mode:
 ## Service toggles, health and restarts
 
 * Container start == service start: the entrypoint is a minimal PID-1 supervisor that **exits when any service dies**, so `--restart always` / `restart: always` turns that into automatic recovery.
-* The compose healthcheck polls `http://127.0.0.1:${NGINX_LISTEN_HTTP_PORT}/` (nginx fronting Selkies) every 30 s.
+* The compose healthcheck polls `http://127.0.0.1:${NGINX_LISTEN_HTTP_PORT}/` (nginx fronting Selkies; with `SELKIES_SUBFOLDER` set it answers a redirect, which counts as healthy) every 30 s.
 * Both `ENABLE_SELKIES=false` and `ENABLE_CDP=false` at once is a configuration error and fails fast.
 * Logs live in `/tmp/*.log` inside the container (`xvfb.log`, `pulseaudio.log`, `chromium.log`, `nginx/*.log`) — `docker compose logs` shows the entrypoint's own output.
 
