@@ -187,7 +187,7 @@ location /desk/ {
 | --- | --- | --- |
 | `PLAYWRIGHT_VERSION` | `1.64.1` | npm 上的 playwright-core 版本(必须存在于 registry.npmjs.org) |
 | `NODE_VERSION` | `24` | Node.js 主版本(由 [`update-playwright-node.mjs`](#版本联动脚本) 保持同步) |
-| `SELKIES_VERSION` | `2.0.0` | Selkies 上游 release;其 wheel 及 pixelflux/pcmflux 依赖 wheel 按钉住的 sha256 摘要下载(见 `Dockerfile`) |
+| `SELKIES_VERSION` | `2.1.0` | Selkies 上游 release;其 wheel 及 pixelflux/pcmflux 依赖 wheel 按钉住的 sha256 摘要下载(见 `Dockerfile`) |
 | `TZ` | `UTC` | 容器时区,以 `ENV TZ` 暴露(运行时可覆盖) |
 | `DOCKER_IMAGE_NAME_TEMPLATE` | `chendefine/playwright-cdp-selkies` | 传给 `playwright-core mark-docker-image` 的值 |
 

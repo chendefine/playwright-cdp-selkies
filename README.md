@@ -187,7 +187,7 @@ Everything is configured via environment variables; with Compose, put them in `.
 | --- | --- | --- |
 | `PLAYWRIGHT_VERSION` | `1.64.1` | playwright-core version from npm (must exist on registry.npmjs.org) |
 | `NODE_VERSION` | `24` | Node.js major (kept in sync by [`update-playwright-node.mjs`](#keeping-versions-in-sync)) |
-| `SELKIES_VERSION` | `2.0.0` | Selkies upstream release; its wheels and the pixelflux/pcmflux dependency wheels are fetched sha256-pinned (see `Dockerfile`) |
+| `SELKIES_VERSION` | `2.1.0` | Selkies upstream release; its wheels and the pixelflux/pcmflux dependency wheels are fetched sha256-pinned (see `Dockerfile`) |
 | `TZ` | `UTC` | container timezone, exposed as `ENV TZ` (runtime-overridable) |
 | `DOCKER_IMAGE_NAME_TEMPLATE` | `chendefine/playwright-cdp-selkies` | value passed to `playwright-core mark-docker-image` |
 
